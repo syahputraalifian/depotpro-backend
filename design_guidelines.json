@@ -1,0 +1,194 @@
+{
+  "app_name": "GasGalon ERP & POS",
+  "personality": "1 iOS-Native Clean with Operations Utility",
+  "personality_one_liner": "A clean, high-trust, and tactile mobile ERP & POS system built specifically for Indonesian LPG gas, branded gallon, and water refill depot distribution businesses.",
+  "color": {
+    "surface": "#F8FAFC",
+    "onSurface": "#0F172A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1E293B",
+    "surfaceTertiary": "#F1F5F9",
+    "onSurfaceTertiary": "#334155",
+    "surfaceInverse": "#0F172A",
+    "onSurfaceInverse": "#F8FAFC",
+    "brand": "#065F46",
+    "brandPrimary": "#047857",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#059669",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#D1FAE5",
+    "onBrandTertiary": "#064E3B",
+    "success": "#15803D",
+    "onSuccess": "#FFFFFF",
+    "warning": "#B45309",
+    "onWarning": "#FFFFFF",
+    "error": "#B91C1C",
+    "onError": "#FFFFFF",
+    "info": "#047857",
+    "onInfo": "#FFFFFF",
+    "border": "#E2E8F0",
+    "borderStrong": "#CBD5E1",
+    "divider": "#E2E8F0",
+    "muted": "#64748B",
+    "onBrand": "#FFFFFF",
+    "assetCylinder": "#047857",
+    "assetGallon": "#0D9488",
+    "assetRefill": "#0284C7",
+    "depositBadge": "#FEF3C7",
+    "onDepositBadge": "#92400E",
+    "receivableBadge": "#FEE2E2",
+    "onReceivableBadge": "#991B1B"
+  },
+  "typography": {
+    "displayFontFamily": "PlusJakartaSans-SemiBold",
+    "textFontFamily": "PlusJakartaSans-Regular",
+    "monoFontFamily": "SpaceGrotesk-Medium",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    },
+    "lineHeight": {
+      "sm": 18,
+      "base": 21,
+      "lg": 24,
+      "xl": 25,
+      "2xl": 30
+    },
+    "weights": {
+      "regular": "400",
+      "medium": "500"
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room with clear module separation. Form inputs and card lists use 12-16pt padding. Primary sticky CTAs are pinned in the lower third with safe area clearance.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 18,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass headers over scrolling order lists and inventory feeds",
+      "Use glass backing on sticky bottom checkout summary action bar",
+      "Pair blur with ≥75% surface background tint for guaranteed text readability"
+    ],
+    "dont's": [
+      "Do not apply blur to input text boxes or dense ledger tables",
+      "Do not use multi-color or purple glass filters",
+      "Do not stack more than 2 blurred surfaces per screen"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-blur",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "POSKasir",
+      "purpose": "High-speed cashier POS terminal for quick item selection, empty cylinder/gallon deposit exchange toggle, multi-tier pricing, cash/tempo tender, and instant WhatsApp receipt generation.",
+      "states": {
+        "loading": "Centered sleek emerald activity spinner with subtle order initialization skeleton.",
+        "empty": "Clean illustration of an empty shopping cart with 'Belum ada item dipilih' and 'Ketuk produk di atas untuk menambah' call to action.",
+        "error": "Card alert with readable message 'Gagal memproses transaksi' with 'Coba Lagi' emerald button."
+      },
+      "layout": "Header with shift cashier name, quick B2B customer selector pill, search & category chips (LPG 3kg, LPG 12kg/50kg, Air Galon Aqua/Le Minerale, Depot Isi Ulang), fast numeric stepper grid with 'Tukar Tabung' toggle per item, cart drawer, and sticky bottom Pay bar showing total Rp and 'Bayar Sekarang'."
+    },
+    {
+      "name": "DashboardOwner",
+      "purpose": "Executive KPI overview for business owner showing daily revenue, net profit estimate, outstanding B2B receivables (piutang), cash on hand, and active empty asset liability.",
+      "states": {
+        "loading": "Centered loading indicator with pulse placeholders for revenue KPI cards.",
+        "empty": "Empty state banner 'Belum ada data transaksi hari ini' with quick action 'Buka Kasir'.",
+        "error": "Error card with refresh button 'Muat Ulang Dashboard'."
+      },
+      "layout": "Top summary banner with date selector, 4 core metric cards (Penjualan Hari Ini, Laba Kotor, Total Piutang Jatuh Tempo, Kas di Kasir), quick action shortcut pills (Setoran Driver, Stok Masuk, Buka Kasir), cylinder/gallon asset balance gauge (Di Gudang vs Di Pelanggan), and recent transaction feed."
+    },
+    {
+      "name": "StokAsetTabungGalon",
+      "purpose": "Two-tier inventory management tracking both consumable liquid/gas contents and physical returnable container assets (Tabung Isi, Tabung Kosong, Galon Dipinjamkan, Galon Rusak/Afkir).",
+      "states": {
+        "loading": "Full-height skeleton placeholder simulating warehouse stock cards.",
+        "empty": "Container asset illustration with 'Belum ada aset terdaftar' and 'Tambah Produk/Aset' CTA.",
+        "error": "Readable error message with retry button."
+      },
+      "layout": "Segmented tab control (Semua Produk, Gas LPG, Air Galon Brand, Depot Isi Ulang), dual inventory status badge per item (Isi: X unit, Kosong di Toko: Y unit, Dipinjam: Z unit), quick stock adjustment button, and supplier purchase restock CTA."
+    },
+    {
+      "name": "PelangganPiutangB2B",
+      "purpose": "B2B client management with custom tiered price list (Eceran, Warung/Toko, Agen/Pangkalan, Korporat/Resto), credit limit, unpaid tempo invoices, and loaned container ledger.",
+      "states": {
+        "loading": "Centered spinner with customer list placeholders.",
+        "empty": "Customer icon with text 'Belum ada pelanggan B2B' and 'Tambah Pelanggan' primary CTA.",
+        "error": "Error banner with retry button."
+      },
+      "layout": "Search bar with filter chips (Semua, Ada Piutang, Pinjam Tabung/Galon), customer cards showing Name, Tier Tag, Outstanding Piutang (Rp), and Loaned Containers count, tapping opens detailed ledger and WhatsApp invoice reminder trigger."
+    },
+    {
+      "name": "RekonsiliasiDriver",
+      "purpose": "End-of-day driver delivery settlement calculating items brought vs delivered vs empty containers returned vs collected cash to prevent operational leakages.",
+      "states": {
+        "loading": "Centered loading animation for driver delivery manifests.",
+        "empty": "Delivery truck illustration with 'Tidak ada penugasan driver aktif' and 'Buat Surat Jalan Baru'.",
+        "error": "Error notice with retry button."
+      },
+      "layout": "Driver selector tabs, manifest status card (Surat Jalan ID, Armada, Jam Berangkat/Kembali), reconciliation table (Barang Bawa, Terjual, Retur Kosong, Selisih), Cash Collection Reconciliation with 'Validasi & Tutup Setoran' button."
+    },
+    {
+      "name": "LaporanKeuangan",
+      "purpose": "Comprehensive financial reporting including Cash Flow, P&L (Laba Rugi), Receivables Aging (Umur Piutang), and Driver Commission calculations.",
+      "states": {
+        "loading": "Full-screen loading indicator for financial aggregation.",
+        "empty": "Report chart icon with 'Belum ada data untuk periode ini'.",
+        "error": "Financial sync error notice with retry."
+      },
+      "layout": "Period filter (Hari Ini, 7 Hari, Bulan Ini, Kustom), summary tabs (Arus Kas, Laba Rugi, Buku Piutang, Komisi Driver), export to PDF & Excel action bar, and breakdown list."
+    }
+  ],
+  "images": {
+    "warehouse_hero": {
+      "url": "https://images.unsplash.com/photo-1503027470001-baf3fb214fe5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwyfHxnYXMlMjBjeWxpbmRlciUyMG1pbmVyYWwlMjB3YXRlciUyMGdhbGxvbiUyMGRlbGl2ZXJ5JTIwd2FyZWhvdXNlJTIwbG9naXN0aWNzfGVufDB8fHx8MTc5MDU1MjA0NXww&ixlib=rb-4.1.0&q=85",
+      "alt": "Tumpukan tabung gas dan logistik pergudangan depot distribusi"
+    },
+    "delivery_courier": {
+      "url": "https://images.unsplash.com/photo-1612630741022-b29ec17d013d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwzfHxkZWxpdmVyeSUyMHRydWNrJTIwd2FyZWhvdXNlJTIwbG9naXN0aWNzJTIwY2FyZ28lMjB3b3JrZXJ8ZW58MHx8fHwxNzkwNTUyMDUzfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Armada pengiriman kurir dan driver pengantar galon air dan gas"
+    },
+    "warehouse_forklift": {
+      "url": "https://images.unsplash.com/photo-1556216607-691819089c19?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwzfHxnYXMlMjBjeWxpbmRlciUyMG1pbmVyYWwlMjB3YXRlciUyMGdhbGxvbiUyMGRlbGl2ZXJ5JTIwd2FyZWhvdXNlJTIwbG9naXN0aWNzfGVufDB8fHx8MTc5MDU1MjA0NXww&ixlib=rb-4.1.0&q=85",
+      "alt": "Manajemen logistik drum dan galon air isi ulang gudang"
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Strict Color Discipline: Strictly adhere to Botanical Emerald / Deep Forest Green (#047857 / #065F46) brand tokens and Slate (#0F172A / #F8FAFC) neutrals. Under no circumstances use banned hues (indigo, purple, violet, navy blue).",
+    "Max Font Weight 500: Never exceed font-weight 500 across all UI elements. Use size and color contrast (e.g. 24pt display vs 14pt body) to create visual hierarchy instead of heavy bold weights.",
+    "B2B Gas & Gallon Specific UX: Always account for the 'Tukar Tabung/Galon' (empty container swap) vs 'Beli Baru + Isi' (new cylinder purchase) flow in POS and stock tracking. Every LPG / Gallon sale impacts both liquid/gas inventory and physical container asset counts.",
+    "Dual-Status Inventory Display: Display both 'Isi' (Full) and 'Kosong' (Empty) counts for returnable assets on cards and POS item pickers.",
+    "Sticky Bottom CTA with Safe Area: All primary actions (Bayar Sekarang, Simpan Transaksi, Rekonsiliasi Selesai) must be pinned in a sticky footer in the lower third with safe area insets to guarantee effortless thumb reach.",
+    "Role-Aware Navigation: Provide dynamic bottom tab views or access control for Pemilik (all menus + P&L), Kasir (POS, Pelanggan, Kas Harian), Admin Gudang (Stok, Surat Jalan), and Driver (Surat Jalan Saya, Setoran Kas & Tabung).",
+    "Digital Receipts & WhatsApp Trigger: Ensure the POS confirmation modal has a 1-tap 'Kirim Struk via WhatsApp' action formatted with clear transaction details, payment method, and container return balance in Rupiah (Rp)."
+  ]
+}
