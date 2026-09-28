@@ -4,8 +4,9 @@ import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api";
-import { rupiah, TIER_LABELS, shortDate, PAYMENT_LABELS } from "@/src/format";
+import { rupiah, TIER_LABELS, shortDate, timeAgo, PAYMENT_LABELS } from "@/src/format";
 import { AppButton, Badge, Field, EmptyState, useToast } from "@/src/ui";
 
 const TYPES = [
@@ -14,21 +15,35 @@ const TYPES = [
   { key: "pangkalan", tier: "pangkalan" },
   { key: "korporat", tier: "korporat" },
 ];
+const PAY_METHODS = ["cash", "transfer", "qris"];
 
 export default function Pelanggan() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const toast = useToast();
+  const isOwner = user?.role === "owner";
 
   const [customers, setCustomers] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [addModal, setAddModal] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [detailTxns, setDetailTxns] = useState<any[]>([]);
+  const [ledger, setLedger] = useState<any[]>([]);
+  const [tab, setTab] = useState<"txn" | "ledger">("txn");
   const [topup, setTopup] = useState("");
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<any>({ name: "", type: "warung", phone: "", address: "", credit_limit: "", payment_terms_days: "7", deposit_balance: "" });
+  // payment modal
+  const [payTxn, setPayTxn] = useState<any>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState("cash");
+  const [payNote, setPayNote] = useState("");
+  // adjust modal
+  const [adjModal, setAdjModal] = useState(false);
+  const [adjAmount, setAdjAmount] = useState("");
+  const [adjReason, setAdjReason] = useState("");
 
   const load = useCallback(async () => {
     try { setCustomers(await api.get("/customers")); } catch (e: any) { toast(e.message, "error"); }
@@ -37,9 +52,17 @@ export default function Pelanggan() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
 
+  const refreshDetail = async (cid: string) => {
+    const fresh = (await api.get("/customers")).find((x: any) => x.id === cid);
+    setDetail(fresh);
+    setCustomers(await api.get("/customers"));
+    const [t, l] = await Promise.all([api.get(`/customers/${cid}/transactions`), api.get(`/customers/${cid}/receivable-history`)]);
+    setDetailTxns(t); setLedger(l);
+  };
+
   const openDetail = async (c: any) => {
-    setDetail(c);
-    try { setDetailTxns(await api.get(`/customers/${c.id}/transactions`)); } catch { setDetailTxns([]); }
+    setDetail(c); setTab("txn");
+    try { await refreshDetail(c.id); } catch { setDetailTxns([]); setLedger([]); }
   };
 
   const saveCustomer = async () => {
@@ -60,20 +83,30 @@ export default function Pelanggan() {
   const doTopup = async () => {
     const amt = Number(topup || 0);
     if (amt <= 0) { toast("Masukkan nominal", "error"); return; }
+    try { await api.post(`/customers/${detail.id}/deposit?amount=${amt}`); toast("Deposit ditambahkan", "success"); setTopup(""); await refreshDetail(detail.id); }
+    catch (e: any) { toast(e.message, "error"); }
+  };
+
+  const openPay = (t: any) => {
+    setPayTxn(t);
+    setPayAmount(String(Math.round(t.total - (t.amount_paid || 0))));
+    setPayMethod("cash"); setPayNote("");
+  };
+  const submitPay = async () => {
     try {
-      await api.post(`/customers/${detail.id}/deposit?amount=${amt}`);
-      toast("Deposit ditambahkan", "success");
-      setTopup(""); await load();
-      const updated = (await api.get("/customers")).find((x: any) => x.id === detail.id);
-      setDetail(updated);
+      const res = await api.post(`/transactions/${payTxn.id}/pay`, { amount: Number(payAmount || 0), method: payMethod, note: payNote });
+      toast(res.fully_paid ? "Piutang lunas!" : `Cicilan diterima, sisa ${rupiah(res.remaining)}`, "success");
+      setPayTxn(null); await refreshDetail(detail.id);
     } catch (e: any) { toast(e.message, "error"); }
   };
 
-  const settle = async (tid: string) => {
+  const submitAdjust = async () => {
+    const amt = Number(adjAmount || 0);
+    if (amt === 0 || !adjReason) { toast("Isi nominal (+/-) dan alasan", "error"); return; }
     try {
-      await api.post(`/transactions/${tid}/pay`);
-      toast("Piutang dilunasi", "success");
-      await load(); openDetail((await api.get("/customers")).find((x: any) => x.id === detail.id));
+      await api.post(`/customers/${detail.id}/adjust-receivable`, { amount: amt, reason: adjReason });
+      toast("Piutang disesuaikan", "success");
+      setAdjModal(false); setAdjAmount(""); setAdjReason(""); await refreshDetail(detail.id);
     } catch (e: any) { toast(e.message, "error"); }
   };
 
@@ -98,9 +131,9 @@ export default function Pelanggan() {
               <Badge text={TIER_LABELS[c.tier]} bg={colors.brandTertiary} fg={colors.onBrandTertiary} />
             </View>
             <View style={styles.row}>
-              <View style={styles.metric}><Text style={styles.mLabel}>Deposit</Text><Text style={[styles.mVal, { color: colors.success }]}>{rupiah(c.deposit_balance)}</Text></View>
-              <View style={styles.metric}><Text style={styles.mLabel}>Piutang</Text><Text style={[styles.mVal, { color: c.receivable_balance > 0 ? colors.error : colors.muted }]}>{rupiah(c.receivable_balance)}</Text></View>
-              <View style={styles.metric}><Text style={styles.mLabel}>Plafon</Text><Text style={styles.mVal}>{rupiah(c.credit_limit)}</Text></View>
+              <View style={styles.metric}><Text style={styles.mLabel}>Deposit</Text><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.mVal, { color: colors.success }]}>{rupiah(c.deposit_balance)}</Text></View>
+              <View style={styles.metric}><Text style={styles.mLabel}>Piutang</Text><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.mVal, { color: c.receivable_balance > 0 ? colors.error : colors.muted }]}>{rupiah(c.receivable_balance)}</Text></View>
+              <View style={styles.metric}><Text style={styles.mLabel}>Plafon</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.mVal}>{rupiah(c.credit_limit)}</Text></View>
             </View>
           </Pressable>
         ))}
@@ -136,7 +169,7 @@ export default function Pelanggan() {
       {/* Detail modal */}
       <Modal visible={!!detail} animationType="slide" transparent onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.backdrop} onPress={() => setDetail(null)} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: "88%" }]}>
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: "90%" }]}>
           <Text style={styles.sheetTitle}>{detail?.name}</Text>
           <Text style={styles.sheetSub}>{detail && TIER_LABELS[detail.tier]} • {detail?.phone}</Text>
           <ScrollView keyboardShouldPersistTaps="handled">
@@ -145,26 +178,79 @@ export default function Pelanggan() {
               <View style={styles.detailBox}><Text style={styles.mLabel}>Piutang</Text><Text style={[styles.mVal, { color: colors.error }]}>{rupiah(detail?.receivable_balance)}</Text></View>
             </View>
             <Field label="Top-up Deposit" value={topup} onChangeText={setTopup} keyboardType="numeric" placeholder="Nominal" testID="topup-input" />
-            <AppButton title="Tambah Deposit" onPress={doTopup} variant="secondary" icon="add-circle-outline" testID="topup-button" />
-            <Text style={[styles.fieldLabel, { marginTop: 20 }]}>Riwayat Transaksi</Text>
-            {detailTxns.length === 0 ? <Text style={styles.sheetSub}>Belum ada transaksi</Text> : detailTxns.map((t) => (
-              <View key={t.id} style={styles.txnRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.txnName}>{t.invoice_no}</Text>
-                  <Text style={styles.txnMeta}>{PAYMENT_LABELS[t.payment_method]} • {shortDate(t.created_at)}</Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <AppButton title="Tambah Deposit" onPress={doTopup} variant="secondary" icon="add-circle-outline" testID="topup-button" style={{ flex: 1 }} />
+              {isOwner && <AppButton title="Koreksi Piutang" onPress={() => setAdjModal(true)} variant="outline" icon="construct-outline" testID="adjust-receivable-button" style={{ flex: 1 }} />}
+            </View>
+
+            <View style={styles.tabRow}>
+              <Pressable testID="tab-txn" onPress={() => setTab("txn")} style={[styles.tabBtn, tab === "txn" && styles.tabBtnActive]}><Text style={[styles.tabText, tab === "txn" && styles.tabTextActive]}>Transaksi</Text></Pressable>
+              <Pressable testID="tab-ledger" onPress={() => setTab("ledger")} style={[styles.tabBtn, tab === "ledger" && styles.tabBtnActive]}><Text style={[styles.tabText, tab === "ledger" && styles.tabTextActive]}>Mutasi Piutang</Text></Pressable>
+            </View>
+
+            {tab === "txn" ? (
+              detailTxns.length === 0 ? <Text style={styles.sheetSub}>Belum ada transaksi</Text> : detailTxns.map((t) => (
+                <View key={t.id} style={styles.txnRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txnName}>{t.invoice_no}</Text>
+                    <Text style={styles.txnMeta}>{PAYMENT_LABELS[t.payment_method]} • {shortDate(t.created_at)}{t.amount_paid > 0 && t.status === "outstanding" ? ` • dibayar ${rupiah(t.amount_paid)}` : ""}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end", gap: 4 }}>
+                    <Text style={styles.txnAmt}>{rupiah(t.total)}</Text>
+                    {t.status === "outstanding" ? (
+                      <Pressable testID={`pay-${t.id}`} onPress={() => openPay(t)} style={styles.settleBtn}><Text style={styles.settleText}>Bayar</Text></Pressable>
+                    ) : <Badge text="Lunas" bg={colors.brandTertiary} fg={colors.onBrandTertiary} />}
+                  </View>
                 </View>
-                <View style={{ alignItems: "flex-end", gap: 4 }}>
-                  <Text style={styles.txnAmt}>{rupiah(t.total)}</Text>
-                  {t.status === "outstanding" && (
-                    <Pressable testID={`settle-${t.id}`} onPress={() => settle(t.id)} style={styles.settleBtn}>
-                      <Text style={styles.settleText}>Lunasi</Text>
-                    </Pressable>
-                  )}
+              ))
+            ) : (
+              ledger.length === 0 ? <Text style={styles.sheetSub}>Belum ada mutasi piutang</Text> : ledger.map((l) => (
+                <View key={l.id} style={styles.ledRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txnName}>{l.type === "charge" ? "Piutang Baru" : l.type === "payment" ? "Pembayaran" : "Penyesuaian"}</Text>
+                    <Text style={styles.txnMeta}>{l.note} • {timeAgo(l.created_at)}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={[styles.txnAmt, { color: l.amount >= 0 ? colors.error : colors.success }]}>{l.amount >= 0 ? "+" : ""}{rupiah(l.amount)}</Text>
+                    <Text style={styles.txnMeta}>Saldo {rupiah(l.balance_after)}</Text>
+                  </View>
                 </View>
-              </View>
-            ))}
+              ))
+            )}
             <View style={{ height: 20 }} />
           </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Payment modal */}
+      <Modal visible={!!payTxn} animationType="slide" transparent onRequestClose={() => setPayTxn(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setPayTxn(null)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <Text style={styles.sheetTitle}>Terima Pembayaran</Text>
+          <Text style={styles.sheetSub}>{payTxn?.invoice_no} • Sisa {rupiah((payTxn?.total || 0) - (payTxn?.amount_paid || 0))}</Text>
+          <Field label="Nominal Dibayar (bisa parsial/cicilan)" value={payAmount} onChangeText={setPayAmount} keyboardType="numeric" testID="pay-amount-input" />
+          <Text style={styles.fieldLabel}>Metode Bayar</Text>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: 14 }}>
+            {PAY_METHODS.map((m) => (
+              <Pressable key={m} testID={`pm-${m}`} onPress={() => setPayMethod(m)} style={[styles.typeBtn, payMethod === m && styles.typeBtnActive]}>
+                <Text style={[styles.typeText, payMethod === m && styles.typeTextActive]}>{PAYMENT_LABELS[m]}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Field label="Catatan (opsional)" value={payNote} onChangeText={setPayNote} placeholder="cicilan minggu 1" />
+          <AppButton title="Simpan Pembayaran" onPress={submitPay} icon="cash-outline" testID="submit-payment-button" />
+        </View>
+      </Modal>
+
+      {/* Adjust receivable modal */}
+      <Modal visible={adjModal} animationType="slide" transparent onRequestClose={() => setAdjModal(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setAdjModal(false)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <Text style={styles.sheetTitle}>Koreksi / Penyesuaian Piutang</Text>
+          <Text style={styles.sheetSub}>Gunakan angka positif untuk menambah, negatif untuk mengurangi saldo piutang.</Text>
+          <Field label="Nominal Penyesuaian (+/-)" value={adjAmount} onChangeText={setAdjAmount} keyboardType="numbers-and-punctuation" placeholder="-50000" testID="adj-amount-input" />
+          <Field label="Alasan / Catatan" value={adjReason} onChangeText={setAdjReason} placeholder="Koreksi salah input" testID="adj-reason-input" />
+          <AppButton title="Simpan Penyesuaian" onPress={submitAdjust} icon="checkmark" testID="submit-adjust-button" />
         </View>
       </Modal>
     </View>
@@ -194,7 +280,13 @@ const useStyles = makeStyles((c) => ({
   typeTextActive: { color: c.onBrandPrimary },
   detailRow: { flexDirection: "row", gap: 10, marginBottom: 16 },
   detailBox: { flex: 1, backgroundColor: c.surfaceTertiary, borderRadius: 12, padding: 14 },
+  tabRow: { flexDirection: "row", gap: 8, marginTop: 20, marginBottom: 8 },
+  tabBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: c.surfaceTertiary, alignItems: "center" },
+  tabBtnActive: { backgroundColor: c.brandPrimary },
+  tabText: { fontSize: 13, fontWeight: "700", color: c.onSurfaceTertiary },
+  tabTextActive: { color: c.onBrandPrimary },
   txnRow: { flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: c.divider, paddingBottom: 12 },
+  ledRow: { flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: c.divider, paddingBottom: 12 },
   txnName: { color: c.onSurface, fontSize: 14, fontWeight: "700" },
   txnMeta: { color: c.muted, fontSize: 11, marginTop: 2 },
   txnAmt: { color: c.onSurface, fontSize: 14, fontWeight: "800" },

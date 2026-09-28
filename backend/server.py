@@ -67,6 +67,21 @@ class UserCreate(BaseModel):
     role: Role = Role.cashier
     base_salary: float = 0
     incentive_rate: float = 0  # per delivered unit
+    phone: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    plate_number: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[Role] = None
+    password: Optional[str] = None
+    base_salary: Optional[float] = None
+    incentive_rate: Optional[float] = None
+    phone: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    plate_number: Optional[str] = None
+    disabled: Optional[bool] = None
 
 
 class UserOut(BaseModel):
@@ -77,6 +92,9 @@ class UserOut(BaseModel):
     disabled: bool = False
     base_salary: float = 0
     incentive_rate: float = 0
+    phone: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    plate_number: Optional[str] = None
 
 
 class Product(BaseModel):
@@ -166,6 +184,7 @@ class TransactionCreate(BaseModel):
     channel: Literal["pos", "delivery", "b2b"] = "pos"
     tier: Literal["eceran", "warung", "pangkalan", "korporat"] = "eceran"
     amount_paid: float = 0
+    driver_id: Optional[str] = None
 
 
 class Transaction(BaseModel):
@@ -175,6 +194,8 @@ class Transaction(BaseModel):
     customer_name: str = "Umum"
     cashier_id: str
     cashier_name: str
+    driver_id: Optional[str] = None
+    driver_name: Optional[str] = None
     items: List[CartItem]
     total: float
     payment_method: str
@@ -218,6 +239,27 @@ class SupplierPurchase(BaseModel):
     paid: bool = True  # if False -> utang supplier
 
 
+class PaymentIn(BaseModel):
+    amount: float = 0  # 0 or >= total means full settlement
+    method: Literal["cash", "transfer", "qris"] = "cash"
+    note: Optional[str] = None
+
+
+class ReceivableAdjust(BaseModel):
+    amount: float  # +/- delta on receivable balance
+    reason: str
+
+
+class POCreate(BaseModel):
+    product_id: str
+    qty: int
+    supplier: Optional[str] = None
+
+
+class SettingsIn(BaseModel):
+    default_receipt_option: Literal["print", "whatsapp", "skip"] = "whatsapp"
+
+
 # ============================ HELPERS ============================
 def public_user(doc) -> dict:
     return {
@@ -225,7 +267,21 @@ def public_user(doc) -> dict:
         "role": doc["role"], "disabled": doc.get("disabled", False),
         "base_salary": doc.get("base_salary", 0),
         "incentive_rate": doc.get("incentive_rate", 0),
+        "phone": doc.get("phone"), "vehicle_type": doc.get("vehicle_type"),
+        "plate_number": doc.get("plate_number"),
     }
+
+
+async def log_receivable(customer_id: str, txn_id: Optional[str], type_: str,
+                         amount: float, method: str, note: str):
+    """Append to receivable ledger. Read balance AFTER customer update."""
+    cust = await db.customers.find_one({"id": customer_id})
+    bal = cust.get("receivable_balance", 0) if cust else 0
+    await db.receivable_ledger.insert_one({
+        "id": new_id(), "customer_id": customer_id, "transaction_id": txn_id,
+        "type": type_, "amount": amount, "balance_after": bal,
+        "method": method, "note": note, "created_at": now_utc(),
+    })
 
 
 def make_token(user) -> str:
@@ -319,7 +375,7 @@ async def list_users(user: dict = Depends(require_roles(Role.owner))):
 
 @api.get("/users/drivers", response_model=List[UserOut])
 async def list_drivers(user: dict = Depends(current_user)):
-    users = await db.users.find({"role": "driver"}).to_list(500)
+    users = await db.users.find({"role": "driver", "disabled": {"$ne": True}}).to_list(500)
     return [public_user(u) for u in users]
 
 
@@ -331,10 +387,37 @@ async def create_user(data: UserCreate, user: dict = Depends(require_roles(Role.
         "id": new_id(), "email": data.email.lower().strip(), "name": data.name,
         "role": data.role.value, "disabled": False,
         "base_salary": data.base_salary, "incentive_rate": data.incentive_rate,
+        "phone": data.phone, "vehicle_type": data.vehicle_type, "plate_number": data.plate_number,
         "hashed_password": pwd_context.hash(data.password), "created_at": now_utc(),
     }
     await db.users.insert_one(doc)
     return public_user(doc)
+
+
+@api.put("/users/{uid}", response_model=UserOut)
+async def update_user(uid: str, data: UserUpdate, user: dict = Depends(require_roles(Role.owner))):
+    existing = await db.users.find_one({"id": uid})
+    if not existing:
+        raise HTTPException(404, "Pengguna tidak ditemukan")
+    upd = {k: v for k, v in data.model_dump().items() if v is not None and k != "password"}
+    if data.role is not None:
+        upd["role"] = data.role.value
+    if data.password:
+        upd["hashed_password"] = pwd_context.hash(data.password)
+    await db.users.update_one({"id": uid}, {"$set": upd})
+    return public_user({**existing, **upd})
+
+
+@api.delete("/users/{uid}")
+async def delete_user(uid: str, user: dict = Depends(require_roles(Role.owner))):
+    existing = await db.users.find_one({"id": uid})
+    if not existing:
+        raise HTTPException(404, "Pengguna tidak ditemukan")
+    if uid == user["id"]:
+        raise HTTPException(400, "Tidak bisa menonaktifkan akun sendiri")
+    # soft delete
+    await db.users.update_one({"id": uid}, {"$set": {"disabled": True}})
+    return {"ok": True}
 
 
 # ============================ PRODUCTS / INVENTORY ============================
@@ -401,6 +484,65 @@ async def low_stock(user: dict = Depends(current_user)):
     return low
 
 
+# ============================ PURCHASE ORDERS (Reorder) ============================
+@api.post("/purchase-orders")
+async def create_po(data: POCreate, user: dict = Depends(require_roles(Role.owner, Role.warehouse_admin))):
+    p = await db.products.find_one({"id": data.product_id})
+    if not p:
+        raise HTTPException(404, "Produk tidak ditemukan")
+    qty = data.qty if data.qty > 0 else max(p.get("reorder_point", 10) * 2 - p.get("stock_filled", 0), 1)
+    doc = {"id": new_id(), "product_id": data.product_id, "product_name": p["name"],
+           "qty": qty, "supplier": data.supplier or "", "unit_cost": p.get("cost_price", 0),
+           "est_cost": round(qty * p.get("cost_price", 0), 2), "status": "draft",
+           "created_at": now_utc()}
+    await db.purchase_orders.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/purchase-orders")
+async def list_po(user: dict = Depends(require_roles(Role.owner, Role.warehouse_admin))):
+    items = await db.purchase_orders.find().sort("created_at", -1).to_list(200)
+    for i in items:
+        i.pop("_id", None)
+    return items
+
+
+@api.post("/purchase-orders/{poid}/receive")
+async def receive_po(poid: str, user: dict = Depends(require_roles(Role.owner, Role.warehouse_admin))):
+    po = await db.purchase_orders.find_one({"id": poid})
+    if not po:
+        raise HTTPException(404, "PO tidak ditemukan")
+    if po["status"] == "received":
+        raise HTTPException(400, "PO sudah diterima")
+    await db.products.update_one({"id": po["product_id"]}, {"$inc": {"stock_filled": po["qty"]}})
+    await db.purchase_orders.update_one({"id": poid}, {"$set": {"status": "received", "received_at": now_utc()}})
+    await db.cash_entries.insert_one({"id": new_id(), "type": "out", "category": "pembelian_supplier",
+        "amount": po["est_cost"], "description": f"Terima PO {po['qty']}x {po['product_name']}",
+        "created_at": now_utc()})
+    return {"ok": True}
+
+
+@api.delete("/purchase-orders/{poid}")
+async def delete_po(poid: str, user: dict = Depends(require_roles(Role.owner, Role.warehouse_admin))):
+    await db.purchase_orders.delete_one({"id": poid, "status": "draft"})
+    return {"ok": True}
+
+
+# ============================ SETTINGS ============================
+@api.get("/settings")
+async def get_settings(user: dict = Depends(current_user)):
+    s = await db.settings.find_one({"id": "app"})
+    return {"default_receipt_option": (s or {}).get("default_receipt_option", "whatsapp")}
+
+
+@api.put("/settings")
+async def update_settings(data: SettingsIn, user: dict = Depends(require_roles(Role.owner))):
+    await db.settings.update_one({"id": "app"},
+        {"$set": {"default_receipt_option": data.default_receipt_option}}, upsert=True)
+    return {"ok": True, "default_receipt_option": data.default_receipt_option}
+
+
 # ============================ CUSTOMERS / CRM ============================
 @api.get("/customers", response_model=List[Customer])
 async def list_customers(user: dict = Depends(current_user)):
@@ -441,6 +583,24 @@ async def customer_transactions(cid: str, user: dict = Depends(current_user)):
     return [Transaction(**i) for i in items]
 
 
+@api.post("/customers/{cid}/adjust-receivable")
+async def adjust_receivable(cid: str, data: ReceivableAdjust, user: dict = Depends(require_roles(Role.owner))):
+    c = await db.customers.find_one({"id": cid})
+    if not c:
+        raise HTTPException(404, "Pelanggan tidak ditemukan")
+    await db.customers.update_one({"id": cid}, {"$inc": {"receivable_balance": data.amount}})
+    await log_receivable(cid, None, "adjustment", data.amount, "adjustment", data.reason)
+    return {"ok": True}
+
+
+@api.get("/customers/{cid}/receivable-history")
+async def receivable_history(cid: str, user: dict = Depends(current_user)):
+    items = await db.receivable_ledger.find({"customer_id": cid}).sort("created_at", -1).to_list(500)
+    for i in items:
+        i.pop("_id", None)
+    return items
+
+
 # ============================ POS / TRANSACTIONS ============================
 async def gen_invoice_no() -> str:
     count = await db.transactions.count_documents({})
@@ -470,9 +630,16 @@ async def create_transaction(data: TransactionCreate, user: dict = Depends(requi
     if is_outstanding and customer:
         due_date = now_utc() + timedelta(days=customer.get("payment_terms_days", 7))
 
+    driver_name = None
+    if data.driver_id:
+        drv = await db.users.find_one({"id": data.driver_id})
+        driver_name = drv["name"] if drv else None
+
     txn = Transaction(
         invoice_no=invoice, customer_id=data.customer_id, customer_name=cust_name,
-        cashier_id=user["id"], cashier_name=user["name"], items=data.items, total=total,
+        cashier_id=user["id"], cashier_name=user["name"],
+        driver_id=data.driver_id, driver_name=driver_name,
+        items=data.items, total=total,
         payment_method=data.payment_method, channel=data.channel, tier=data.tier,
         status="outstanding" if is_outstanding else "paid",
         amount_paid=0 if is_outstanding else (data.amount_paid or total),
@@ -492,14 +659,12 @@ async def create_transaction(data: TransactionCreate, user: dict = Depends(requi
         await db.customers.update_one({"id": customer["id"]}, {"$inc": {"deposit_balance": -total}})
     elif data.payment_method == "tempo" and customer:
         await db.customers.update_one({"id": customer["id"]}, {"$inc": {"receivable_balance": total}})
+        await log_receivable(customer["id"], txn.id, "charge", total, "tempo",
+                             f"Piutang dari nota {invoice}")
     else:
         await db.cash_entries.insert_one({"id": new_id(), "type": "in", "category": "penjualan",
             "amount": total, "description": f"Penjualan {invoice}", "related_id": txn.id,
             "created_at": now_utc()})
-
-    # container loan tracking for exchange without returning empty (borrowed)
-    if customer and containers_out > 0:
-        pass  # exchange returns empty, so no borrow. Deposit handled at customer level.
 
     return txn
 
@@ -511,18 +676,28 @@ async def list_transactions(limit: int = 100, user: dict = Depends(current_user)
 
 
 @api.post("/transactions/{tid}/pay")
-async def settle_transaction(tid: str, user: dict = Depends(require_roles(Role.owner, Role.cashier))):
+async def settle_transaction(tid: str, data: PaymentIn, user: dict = Depends(require_roles(Role.owner, Role.cashier))):
     t = await db.transactions.find_one({"id": tid})
     if not t:
         raise HTTPException(404, "Transaksi tidak ditemukan")
     if t["status"] != "outstanding":
         raise HTTPException(400, "Transaksi sudah lunas")
-    await db.transactions.update_one({"id": tid}, {"$set": {"status": "paid", "amount_paid": t["total"]}})
+    remaining = round(t["total"] - t.get("amount_paid", 0), 2)
+    pay = round(min(data.amount, remaining), 2) if data.amount and data.amount > 0 else remaining
+    if pay <= 0:
+        raise HTTPException(400, "Nominal pembayaran tidak valid")
+    new_paid = round(t.get("amount_paid", 0) + pay, 2)
+    fully = new_paid >= t["total"] - 0.001
+    await db.transactions.update_one({"id": tid}, {"$set": {
+        "amount_paid": new_paid, "status": "paid" if fully else "outstanding"}})
     if t.get("customer_id"):
-        await db.customers.update_one({"id": t["customer_id"]}, {"$inc": {"receivable_balance": -t["total"]}})
+        await db.customers.update_one({"id": t["customer_id"]}, {"$inc": {"receivable_balance": -pay}})
+        note = data.note or (f"Pelunasan {t['invoice_no']}" if fully else f"Cicilan {t['invoice_no']}")
+        await log_receivable(t["customer_id"], tid, "payment", -pay, data.method, note)
     await db.cash_entries.insert_one({"id": new_id(), "type": "in", "category": "pelunasan_piutang",
-        "amount": t["total"], "description": f"Pelunasan {t['invoice_no']}", "created_at": now_utc()})
-    return {"ok": True}
+        "amount": pay, "description": f"Pembayaran piutang {t['invoice_no']}", "created_at": now_utc()})
+    return {"ok": True, "paid": pay, "amount_paid": new_paid,
+            "remaining": round(t["total"] - new_paid, 2), "fully_paid": fully}
 
 
 # ============================ DRIVER RECONCILIATION ============================

@@ -169,11 +169,13 @@ class TestTransactions:
 
     def test_credit_control_deposit_over_balance(self, cashier_client):
         custs = cashier_client.get(f"{BASE_URL}/api/customers").json()
-        c = next(x for x in custs if x["name"] == "Resto Sederhana")  # deposit=0
-        p = self._product(cashier_client, "LPG 3 Kg")
-        items = [{"product_id": p["id"], "name": p["name"], "qty": 1,
+        c = next(x for x in custs if x["name"] == "Resto Sederhana")
+        # Use a large qty of LPG 12 Kg so order value is guaranteed to exceed deposit balance
+        p = self._product(cashier_client, "LPG 12 Kg")
+        qty = 100  # ~18M > any conceivable deposit balance
+        items = [{"product_id": p["id"], "name": p["name"], "qty": qty,
                   "price": p["price_korporat"], "is_exchange": True,
-                  "subtotal": p["price_korporat"]}]
+                  "subtotal": p["price_korporat"] * qty}]
         r = cashier_client.post(f"{BASE_URL}/api/transactions",
                                 json={"customer_id": c["id"], "items": items,
                                       "payment_method": "deposit", "tier": "korporat"})
@@ -200,8 +202,8 @@ class TestTransactions:
         upd_c = next(x for x in cashier_client.get(f"{BASE_URL}/api/customers").json()
                      if x["id"] == c["id"])
         assert upd_c["receivable_balance"] == before_recv + price * qty
-        # settle
-        r2 = cashier_client.post(f"{BASE_URL}/api/transactions/{txn['id']}/pay")
+        # settle (PaymentIn now required; empty body triggers full settlement)
+        r2 = cashier_client.post(f"{BASE_URL}/api/transactions/{txn['id']}/pay", json={})
         assert r2.status_code == 200
         after_c = next(x for x in cashier_client.get(f"{BASE_URL}/api/customers").json()
                        if x["id"] == c["id"])

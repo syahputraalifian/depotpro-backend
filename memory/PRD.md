@@ -39,7 +39,16 @@ Sistem aplikasi manajemen bisnis terpadu (ERP & POS) untuk usaha Agen LPG, Air M
 - **P2**: Monthly P&L / cashflow charts, operational expense categories (BBM, gaji, filter, penyusutan armada), simple balance sheet report.
 - **P2**: Offline mode for POS/driver, QRIS integration, thermal Bluetooth printing (needs native build).
 
+## Implemented (2026-09-28) — Iteration 2 (5 improvement areas)
+- **Price/Catalog management**: owner/warehouse edit all tier prices + HPP via Stok "Edit Harga" (PUT /products), recomputes HPP; cashier/driver read-only (403). Real-time sync to POS/Driver on focus.
+- **Reorder automation & Purchase Orders**: auto stock decrement on sale; red "Perlu Reorder"/"STOK KRITIS" banners; one-click "Buat PO" on Stok + Dashboard; PO drafts sheet with badge + "Terima Stok" (adds stock, logs cash-out). Endpoints /purchase-orders (+ /receive).
+- **Flexible receipt options**: after checkout modal with 3 choices (Cetak via expo-print, Kirim WA, Tanpa Struk). Owner "Opsi Struk Bawaan" in /settings (print/whatsapp/skip) via /settings API.
+- **Piutang management**: partial/installment payments (amount+method+note) via /transactions/{id}/pay; owner "Koreksi Piutang" adjustment with reason; "Mutasi Piutang" ledger tab (charge/payment/adjustment + balance_after). New receivable_ledger collection.
+- **Multi-driver/fleet**: /manage-users screen (owner) add/edit/soft-delete drivers with phone/vehicle_type/plate_number; POS "Antar" channel with courier picker; transaction stores driver_id/driver_name; recon report per driver.
+- Verified: 40/40 backend tests pass, frontend flows functional.
+
 ## Next Tasks
 - Add depot production module (bahan baku & filter) — explicitly in original spec.
-- Add supplier purchase + accounts payable UI.
-- Add payroll generation screen for owner.
+- Add supplier purchase + accounts payable UI (backend /purchases + /payables exist).
+- Add payroll generation screen for owner (backend ready).
+- Per-courier daily cash reconciliation report view (data already keyed by driver_id).

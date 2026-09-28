@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 2 (5 improvements) fully verified. Backend: 40/40 pytest tests PASSED (added 15 new tests in test_iteration2.py covering price edit + RBAC, HPP recompute, PO draft/receive + cash-out, /settings GET/PUT + owner-only, partial payment + ledger + adjust-receivable + RBAC, driver CRUD with vehicle/plate + self-delete guard + driver_id/name persistence on delivery txn). Also patched 2 pre-existing regression tests that broke due to iter-2 changes: (a) settle_transaction now requires PaymentIn body -> tests now pass {}; (b) Resto Sederhana deposit_balance is no longer 0 due to persistent DB state across runs -> test now uses qty=100 LPG 12Kg to guarantee overspend. Frontend (mobile 390x844): owner login OK, dashboard shows 4 new quick-actions (Kelola Kurir, Pengaturan, Katalog Harga, Setoran). Stok screen has 9 `edit-{id}` (Edit Harga) buttons opening modal with pf-name/pf-price-eceran/pf-price-warung/pf-price-pangkalan/pf-price-korporat fields; show-po-button opens draft-PO sheet with 'Terima Stok' (draft for Air Isi Ulang visible from backend tests). /settings screen renders opt-print/opt-whatsapp/opt-skip + save-settings-button and persists selection. /manage-users lists 5 karyawan, add-user-button opens modal with uf-name/uf-email/uf-vehicle/uf-plate (driver-specific fields). Pelanggan tab renders receivable/deposit/plafon columns.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Pelanggan (customer card)", "issues": ["Plafon like 'Rp10.000.000' wraps awkwardly to a second line ('Rp10.000.00' / '0') in the narrow 3-column layout on 390px width. Consider shrinking font, using compact notation (Rp10jt), or adjusting numberOfLines / flex."]}
+    ],
+    "react_native_issues": [
+      {"component": "Deprecated style props (console)", "issue": "'props.pointerEvents is deprecated. Use style.pointerEvents' and '\"shadow*\" style props are deprecated. Use \"boxShadow\"' warnings on many screens. Likely originate from react-native-web or 3rd-party libs (react-native-vector-icons / safe-area-context); check if any local StyleSheet uses shadowColor/shadowOffset/shadowOpacity/shadowRadius and migrate to boxShadow, and replace <View pointerEvents=\"...\"> with style={{ pointerEvents: '...' }}."},
+      {"component": "useNativeDriver warning", "issue": "'Animated: useNativeDriver is not supported...' logged from a Modal/Animated call on web. Consider useNativeDriver: false in web or wrap in Platform.OS check. Non-blocking on Expo Go / web preview."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Address deprecated pointerEvents/shadow* warnings by migrating to style.pointerEvents / boxShadow to be future-proof for RN 0.75+.",
+    "(Optional) Compact Rupiah formatting on customer card so 8-digit plafon does not wrap ugly on 375-390px devices.",
+    "(Optional) Add cleanup of TEST_ prefixed customers/users at end of test session so Pelanggan list does not accumulate on repeated runs."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~950 lines - past the 700-line threshold; split into modules (auth, products, transactions, po, receivables, drivers, finance) is recommended.",
+    "Still uses deprecated @app.on_event('startup'/'shutdown') - migrate to FastAPI lifespan (non-blocking today).",
+    "settle_transaction with amount<=0 returns 400 which is correct; frontend must send {} to full-settle (currently done in api.ts / pelanggan.tsx)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration2.py (new)",
+    "/app/backend/tests/test_backend.py (2 assertions updated: deposit-over-balance uses guaranteed-oversize qty; tempo-settle passes {} body)"
+  ],
+  "success_rate": {"backend": "100% (40/40)", "frontend": "100% (all iter-2 flows rendered & wired)"},
+  "seed_data_creation": "TEST_Cust1 x5 accumulated (persistence-across-runs artifact). TEST_LPG5 product persists. TEST driver_{uuid} soft-disabled (excluded from /users/drivers). None affect production flows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend regression + iteration_2 test file both run in <10s: pytest /app/backend/tests/ -v. Frontend testIDs used: seg-{all|lpg|galon_brand|refill}, add-product-button, show-po-button, edit-{pid}, adjust-{pid}, po-{pid}, receive-po-{poid}, pf-name/pf-cat-*/pf-price-*, save-product-button, opt-{print|whatsapp|skip}, save-settings-button, add-user-button, uf-name/uf-email/uf-password/uf-role-*/uf-vehicle/uf-plate, edit-user-{id}, delete-user-{id}, save-user-button. Owner-only routes: /settings, /manage-users. Note DB state persists across pytest runs (deposit/receivable balances drift); iter-2 tests are resilient to this.",
+  "rca_of_issue": "N/A - all iteration 2 improvements pass end-to-end. Two pre-existing regression tests updated to reflect (a) new required PaymentIn body on /transactions/{id}/pay and (b) stateful deposit_balance on seeded Resto Sederhana."
+}

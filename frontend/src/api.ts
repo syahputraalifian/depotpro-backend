@@ -48,4 +48,11 @@ export const api = {
     });
     return handle(res);
   },
+  async del(path: string) {
+    const res = await fetch(`${BASE}/api${path}`, {
+      method: "DELETE",
+      headers: await authHeaders(),
+    });
+    return handle(res);
+  },
 };

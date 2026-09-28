@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   const canFinance = user?.role === "owner" || user?.role === "cashier";
+  const canManageStock = user?.role === "owner" || user?.role === "warehouse_admin";
 
   const load = useCallback(async () => {
     try {
@@ -47,6 +48,15 @@ export default function Dashboard() {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  };
+
+  const makePO = async (p: any) => {
+    try {
+      await api.post("/purchase-orders", { product_id: p.id, qty: 0 });
+      toast(`Draft PO ${p.name} dibuat`, "success");
+    } catch (e: any) {
+      toast(e.message, "error");
+    }
   };
 
   return (
@@ -90,6 +100,15 @@ export default function Dashboard() {
           )}
         </View>
 
+        {user?.role === "owner" && (
+          <View style={styles.quickRow}>
+            <QuickAction icon="people-circle" label="Kelola Kurir" onPress={() => router.push("/manage-users")} />
+            <QuickAction icon="settings" label="Pengaturan" onPress={() => router.push("/settings")} />
+            <QuickAction icon="pricetags" label="Katalog Harga" onPress={() => router.push("/(tabs)/stok")} />
+            <QuickAction icon="car-sport" label="Setoran" onPress={() => router.push("/(tabs)/driver")} />
+          </View>
+        )}
+
         {/* Asset balance / Neraca Wadah */}
         {assets && (
           <Card style={{ marginTop: 4 }}>
@@ -113,12 +132,22 @@ export default function Dashboard() {
           {low.length === 0 ? (
             <Text style={styles.emptyLine}>Semua stok aman ✅</Text>
           ) : (
-            low.map((p) => (
-              <View key={p.id} style={styles.lowRow}>
-                <Text style={styles.lowName}>{p.name}</Text>
-                <Badge text={`Sisa ${p.stock_filled}`} bg={colors.receivableBadge} fg={colors.onReceivableBadge} />
-              </View>
-            ))
+            low.map((p) => {
+              const critical = p.stock_filled <= 0;
+              return (
+                <View key={p.id} style={styles.lowRow}>
+                  <Text style={styles.lowName}>{p.name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Badge text={critical ? "Kritis" : `Sisa ${p.stock_filled}`} bg={colors.receivableBadge} fg={colors.onReceivableBadge} />
+                    {canManageStock && (
+                      <Pressable testID={`dash-po-${p.id}`} onPress={() => makePO(p)} style={styles.dashPoBtn}>
+                        <Text style={styles.dashPoText}>Buat PO</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              );
+            })
           )}
         </Card>
 
@@ -210,6 +239,8 @@ const useStyles = makeStyles((c) => ({
   emptyLine: { color: c.muted, fontSize: 13, marginTop: 10 },
   lowRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
   lowName: { color: c.onSurface, fontSize: 14, fontWeight: "600", flex: 1 },
+  dashPoBtn: { backgroundColor: c.brandPrimary, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999 },
+  dashPoText: { color: c.onBrandPrimary, fontSize: 11, fontWeight: "700" },
   txnRow: { flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8 },
   txnName: { color: c.onSurface, fontSize: 14, fontWeight: "700" },
   txnMeta: { color: c.muted, fontSize: 11, marginTop: 2 },
