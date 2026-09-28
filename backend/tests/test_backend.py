@@ -113,7 +113,7 @@ class TestCustomers:
         c = next(x for x in custs if x["name"] == "Warung Bu Siti")
         before = c["deposit_balance"]
         r = owner_client.post(f"{BASE_URL}/api/customers/{c['id']}/deposit",
-                              params={"amount": 50000})
+                              json={"amount": 50000})
         assert r.status_code == 200
         after = next(x for x in owner_client.get(f"{BASE_URL}/api/customers").json()
                      if x["id"] == c["id"])

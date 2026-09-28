@@ -140,6 +140,7 @@ class ProductCreate(BaseModel):
 class StockAdjust(BaseModel):
     stock_filled_delta: int = 0
     stock_empty_delta: int = 0
+    total_sold_delta: int = 0
     note: Optional[str] = None
 
 
@@ -250,6 +251,11 @@ class PaymentIn(BaseModel):
 class ReceivableAdjust(BaseModel):
     amount: float  # +/- delta on receivable balance
     reason: str
+
+
+class DepositAdjust(BaseModel):
+    amount: float  # positive = top-up, negative = koreksi/pengurangan
+    reason: Optional[str] = None
 
 
 class POCreate(BaseModel):
@@ -462,8 +468,18 @@ async def adjust_stock(pid: str, data: StockAdjust, user: dict = Depends(require
     if not p:
         raise HTTPException(404, "Produk tidak ditemukan")
     await db.products.update_one({"id": pid}, {"$inc": {
-        "stock_filled": data.stock_filled_delta, "stock_empty": data.stock_empty_delta}})
+        "stock_filled": data.stock_filled_delta,
+        "stock_empty": data.stock_empty_delta,
+        "total_sold": data.total_sold_delta}})
+    # clamp negatives to 0 so counters never go below zero
     p = await db.products.find_one({"id": pid})
+    clamp = {}
+    for f in ("stock_filled", "stock_empty", "total_sold"):
+        if p.get(f, 0) < 0:
+            clamp[f] = 0
+    if clamp:
+        await db.products.update_one({"id": pid}, {"$set": clamp})
+        p = await db.products.find_one({"id": pid})
     return Product(**p)
 
 
@@ -575,14 +591,26 @@ async def update_customer(cid: str, data: CustomerCreate, user: dict = Depends(c
 
 
 @api.post("/customers/{cid}/deposit")
-async def topup_deposit(cid: str, amount: float, user: dict = Depends(current_user)):
+async def topup_deposit(cid: str, data: DepositAdjust, user: dict = Depends(current_user)):
     c = await db.customers.find_one({"id": cid})
     if not c:
         raise HTTPException(404, "Pelanggan tidak ditemukan")
-    await db.customers.update_one({"id": cid}, {"$inc": {"deposit_balance": amount}})
-    await db.cash_entries.insert_one({"id": new_id(), "type": "in", "category": "topup_deposit",
-        "amount": amount, "description": f"Top-up deposit {c['name']}", "created_at": now_utc()})
-    return {"ok": True}
+    # reducing deposit is a correction reserved for owner
+    if data.amount < 0 and user["role"] != "owner":
+        raise HTTPException(403, "Hanya Pemilik yang boleh mengurangi deposit")
+    new_balance = c.get("deposit_balance", 0) + data.amount
+    if new_balance < 0:
+        raise HTTPException(400, "Saldo deposit tidak boleh negatif")
+    await db.customers.update_one({"id": cid}, {"$inc": {"deposit_balance": data.amount}})
+    if data.amount >= 0:
+        await db.cash_entries.insert_one({"id": new_id(), "type": "in", "category": "topup_deposit",
+            "amount": data.amount, "description": f"Top-up deposit {c['name']}", "created_at": now_utc()})
+    else:
+        await db.cash_entries.insert_one({"id": new_id(), "type": "out", "category": "koreksi_deposit",
+            "amount": abs(data.amount),
+            "description": f"Koreksi deposit {c['name']}: {data.reason or 'penyesuaian'}",
+            "created_at": now_utc()})
+    return {"ok": True, "deposit_balance": new_balance}
 
 
 @api.get("/customers/{cid}/transactions", response_model=List[Transaction])
@@ -913,7 +941,7 @@ def _window_metrics(txns, entries, start, end):
         cat = e.get("category", "lainnya")
         if e["type"] == "in" and cat == "pelunasan_piutang":
             income["piutang"] += e["amount"]
-        elif e["type"] == "out" and cat != "pembelian_supplier":
+        elif e["type"] == "out" and cat not in ("pembelian_supplier", "koreksi_deposit"):
             expenses[cat] = expenses.get(cat, 0) + e["amount"]
     income_total = round(sum(income.values()), 2)
     expenses_total = round(sum(expenses.values()), 2)

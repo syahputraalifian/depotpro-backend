@@ -44,6 +44,9 @@ export default function Pelanggan() {
   const [adjModal, setAdjModal] = useState(false);
   const [adjAmount, setAdjAmount] = useState("");
   const [adjReason, setAdjReason] = useState("");
+  const [depModal, setDepModal] = useState(false);
+  const [depAmount, setDepAmount] = useState("");
+  const [depReason, setDepReason] = useState("");
 
   const load = useCallback(async () => {
     try { setCustomers(await api.get("/customers")); } catch (e: any) { toast(e.message, "error"); }
@@ -83,8 +86,18 @@ export default function Pelanggan() {
   const doTopup = async () => {
     const amt = Number(topup || 0);
     if (amt <= 0) { toast("Masukkan nominal", "error"); return; }
-    try { await api.post(`/customers/${detail.id}/deposit?amount=${amt}`); toast("Deposit ditambahkan", "success"); setTopup(""); await refreshDetail(detail.id); }
+    try { await api.post(`/customers/${detail.id}/deposit`, { amount: amt }); toast("Deposit ditambahkan", "success"); setTopup(""); await refreshDetail(detail.id); }
     catch (e: any) { toast(e.message, "error"); }
+  };
+
+  const submitDepAdjust = async () => {
+    const amt = Number(depAmount || 0);
+    if (amt >= 0 || !depReason) { toast("Isi nominal pengurangan (negatif) & alasan", "error"); return; }
+    try {
+      await api.post(`/customers/${detail.id}/deposit`, { amount: amt, reason: depReason });
+      toast("Deposit dikoreksi", "success");
+      setDepModal(false); setDepAmount(""); setDepReason(""); await refreshDetail(detail.id);
+    } catch (e: any) { toast(e.message, "error"); }
   };
 
   const openPay = (t: any) => {
@@ -180,8 +193,11 @@ export default function Pelanggan() {
             <Field label="Top-up Deposit" value={topup} onChangeText={setTopup} keyboardType="numeric" placeholder="Nominal" testID="topup-input" />
             <View style={{ flexDirection: "row", gap: 10 }}>
               <AppButton title="Tambah Deposit" onPress={doTopup} variant="secondary" icon="add-circle-outline" testID="topup-button" style={{ flex: 1 }} />
-              {isOwner && <AppButton title="Koreksi Piutang" onPress={() => setAdjModal(true)} variant="outline" icon="construct-outline" testID="adjust-receivable-button" style={{ flex: 1 }} />}
+              {isOwner && <AppButton title="Kurangi Deposit" onPress={() => setDepModal(true)} variant="outline" icon="remove-circle-outline" testID="reduce-deposit-button" style={{ flex: 1 }} />}
             </View>
+            {isOwner && (
+              <AppButton title="Koreksi Piutang" onPress={() => setAdjModal(true)} variant="outline" icon="construct-outline" testID="adjust-receivable-button" style={{ marginTop: 10 }} />
+            )}
 
             <View style={styles.tabRow}>
               <Pressable testID="tab-txn" onPress={() => setTab("txn")} style={[styles.tabBtn, tab === "txn" && styles.tabBtnActive]}><Text style={[styles.tabText, tab === "txn" && styles.tabTextActive]}>Transaksi</Text></Pressable>
@@ -251,6 +267,18 @@ export default function Pelanggan() {
           <Field label="Nominal Penyesuaian (+/-)" value={adjAmount} onChangeText={setAdjAmount} keyboardType="numbers-and-punctuation" placeholder="-50000" testID="adj-amount-input" />
           <Field label="Alasan / Catatan" value={adjReason} onChangeText={setAdjReason} placeholder="Koreksi salah input" testID="adj-reason-input" />
           <AppButton title="Simpan Penyesuaian" onPress={submitAdjust} icon="checkmark" testID="submit-adjust-button" />
+        </View>
+      </Modal>
+
+      {/* Reduce / correct deposit modal */}
+      <Modal visible={depModal} animationType="slide" transparent onRequestClose={() => setDepModal(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDepModal(false)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <Text style={styles.sheetTitle}>Kurangi / Koreksi Deposit</Text>
+          <Text style={styles.sheetSub}>Saldo saat ini {rupiah(detail?.deposit_balance)}. Masukkan nominal negatif untuk mengurangi (mis. pengembalian tunai / koreksi input).</Text>
+          <Field label="Nominal Pengurangan (negatif)" value={depAmount} onChangeText={setDepAmount} keyboardType="numbers-and-punctuation" placeholder="-50000" testID="dep-amount-input" />
+          <Field label="Alasan / Catatan Koreksi" value={depReason} onChangeText={setDepReason} placeholder="Pengembalian tunai ke pelanggan" testID="dep-reason-input" />
+          <AppButton title="Simpan Koreksi Deposit" onPress={submitDepAdjust} icon="checkmark" testID="submit-deposit-adjust-button" />
         </View>
       </Modal>
     </View>

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Modal, RefreshControl } from "react-native";
+import { View, Text, ScrollView, Pressable, Modal, RefreshControl, TextInput } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
@@ -15,6 +15,45 @@ const SEG = [
   { key: "galon_brand", label: "Air Galon" },
   { key: "refill", label: "Isi Ulang" },
 ];
+
+function DeltaStepper({ label, current, value, onChange, testID, colors }: any) {
+  const delta = Number(value || 0);
+  const preview = Number(current || 0) + delta;
+  const bump = (d: number) => onChange(String(delta + d));
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onSurfaceSecondary }}>{label}</Text>
+        <Text style={{ fontSize: 12, color: colors.muted }}>
+          Saat ini {current} → <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{preview}</Text>
+        </Text>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Pressable
+          testID={`${testID}-minus`}
+          onPress={() => bump(-1)}
+          style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }}
+        >
+          <Icon name="remove" size={22} color={colors.onSurface} />
+        </Pressable>
+        <TextInput
+          testID={testID}
+          value={value}
+          onChangeText={onChange}
+          keyboardType="numbers-and-punctuation"
+          style={{ flex: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: colors.border, textAlign: "center", fontSize: 16, fontWeight: "700", color: colors.onSurface, backgroundColor: colors.surfaceSecondary }}
+        />
+        <Pressable
+          testID={`${testID}-plus`}
+          onPress={() => bump(1)}
+          style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" }}
+        >
+          <Icon name="add" size={22} color={colors.onBrandPrimary} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 const EMPTY_FORM = {
   name: "", category: "lpg", cost_price: "", freight_cost: "", depreciation_cost: "",
@@ -41,6 +80,7 @@ export default function Stok() {
   const [saving, setSaving] = useState(false);
   const [adjust, setAdjust] = useState<any>(null);
   const [adjFilled, setAdjFilled] = useState("0");
+  const [adjSold, setAdjSold] = useState("0");
   const [adjEmpty, setAdjEmpty] = useState("0");
 
   const load = useCallback(async () => {
@@ -91,9 +131,13 @@ export default function Stok() {
 
   const saveAdjust = async () => {
     try {
-      await api.post(`/products/${adjust.id}/adjust`, { stock_filled_delta: Number(adjFilled || 0), stock_empty_delta: Number(adjEmpty || 0) });
+      await api.post(`/products/${adjust.id}/adjust`, {
+        stock_filled_delta: Number(adjFilled || 0),
+        total_sold_delta: Number(adjSold || 0),
+        stock_empty_delta: Number(adjEmpty || 0),
+      });
       toast("Stok diperbarui", "success");
-      setAdjust(null); setAdjFilled("0"); setAdjEmpty("0"); load();
+      setAdjust(null); setAdjFilled("0"); setAdjSold("0"); setAdjEmpty("0"); load();
     } catch (e: any) { toast(e.message, "error"); }
   };
 
@@ -226,9 +270,35 @@ export default function Stok() {
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
           <Text style={styles.sheetTitle}>Sesuaikan Stok</Text>
           <Text style={styles.sheetSub}>{adjust?.name}</Text>
-          <Field label="Tambah/Kurang Stok Isi (+/-)" value={adjFilled} onChangeText={setAdjFilled} keyboardType="numbers-and-punctuation" testID="adj-filled" />
-          <Field label="Tambah/Kurang Stok Kosong (+/-)" value={adjEmpty} onChangeText={setAdjEmpty} keyboardType="numbers-and-punctuation" testID="adj-empty" />
-          <AppButton title="Perbarui" onPress={saveAdjust} icon="checkmark" testID="save-adjust-button" />
+
+          <DeltaStepper
+            label="Stok Isi (siap jual)"
+            current={adjust?.stock_filled ?? 0}
+            value={adjFilled}
+            onChange={setAdjFilled}
+            testID="adj-filled"
+            colors={colors}
+          />
+          <DeltaStepper
+            label="Jumlah Terjual (akumulasi)"
+            current={adjust?.total_sold ?? 0}
+            value={adjSold}
+            onChange={setAdjSold}
+            testID="adj-sold"
+            colors={colors}
+          />
+          {adjust?.category !== "refill" && (
+            <DeltaStepper
+              label="Wadah Kosong (tabung/galon)"
+              current={adjust?.stock_empty ?? 0}
+              value={adjEmpty}
+              onChange={setAdjEmpty}
+              testID="adj-empty"
+              colors={colors}
+            />
+          )}
+
+          <AppButton title="Simpan Perubahan" onPress={saveAdjust} icon="checkmark" testID="save-adjust-button" style={{ marginTop: 8 }} />
         </View>
       </Modal>
 

@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 4 fully verified end-to-end. Backend: 65/65 pytest passed (13 new tests in test_iteration4.py + 1 legacy test migrated to JSON body). Verified: FIX 1+2 POST /api/products/{id}/adjust accepts {stock_filled_delta, total_sold_delta, stock_empty_delta}, applies all 3 independently, and CLAMPS any counter to 0 when it would go negative (owner+warehouse only; cashier=403). FIX 3 POST /api/customers/{id}/deposit now JSON body {amount, reason}: positive top-up allowed for any auth user (logs in/topup_deposit cash entry), negative reduction OWNER-ONLY (cashier=403, driver=403), rejects (400) if resulting balance < 0, logs out/koreksi_deposit cash entry with reason in description. Frontend (mobile 390x844): Owner login OK; Stok tab -> adjust modal now renders 3 independent DeltaStepper rows with +/- buttons and editable signed number input (adj-filled/adj-sold/adj-empty with -minus/-plus). adj-empty correctly HIDDEN for refill category (verified on 'Air Isi Ulang RO 19L' where only adj-filled + adj-sold appear). Signed input allows negative deltas (adj-filled went to -1 via minus). save-adjust-button posts to /adjust and closes modal, product card auto-refreshes via load(). FIX 3 UI: on Pelanggan detail modal for OWNER, both topup-button + reduce-deposit-button visible; reduce opens modal (dep-amount-input + dep-reason-input) which submits successfully. For CASHIER, topup-button IS visible but reduce-deposit-button is HIDDEN (correct role guard). FIX 4 logout: tapping logout-button from Beranda header (owner) redirects to /login, login form re-appears (login-email-input visible), and re-login works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Protected routes when logged out", "issues": ["Direct navigation to /pelanggan while unauthenticated does NOT redirect to /login; the screen renders (empty state due to API 401s). Not in scope of the 4 iter-4 bugs but worth adding a route guard in (tabs)/_layout."]},
+      {"screen": "Pelanggan detail modal (data pollution)", "issues": ["Pangkalan Jaya Abadi shows dozens of INV-260928-* transactions and inflated deposit (Rp1.224.000) from previous test runs; consider TEST_ prefix cleanup in a seed reset script."]}
+    ],
+    "react_native_issues": [
+      {"component": "props.pointerEvents (console warning)", "issue": "'props.pointerEvents is deprecated. Use style.pointerEvents' - still present (library-level, carried over from iter-2/3)."},
+      {"component": "shadow* style props (console warning)", "issue": "'shadow* style props are deprecated. Use boxShadow' - carried over from iter-2/3."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add a route guard in app/(tabs)/_layout.tsx to redirect unauthenticated users to /login when they hit protected tabs directly by URL.",
+    "(Optional) Clean TEST_-prefixed / high-pollution seed data (Pangkalan Jaya Abadi shows dozens of prior test invoices + inflated deposit).",
+    "(Carried) Migrate deprecated pointerEvents / shadow* style props to style.pointerEvents / boxShadow."
+  ],
+  "critical_code_review_comments": [
+    "server.py at ~1115 lines - past the 700-line threshold; consider splitting into modules (auth, products, customers, pos, po, finance, driver, assets).",
+    "Uses deprecated @app.on_event('startup') - migrate to FastAPI lifespan.",
+    "DepositAdjust.reason is Optional but frontend UX enforces it for reductions; consider server-side requiring reason when amount < 0 for stronger audit trail."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new - 13 tests: 4 stock-adjust + 8 deposit + 1 login)",
+    "/app/backend/tests/test_backend.py (migrated test_topup_deposit: params -> json body)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated - 65 passed)"
+  ],
+  "success_rate": {"backend": "100% (65/65)", "frontend": "100% (all 4 iter-4 fixes verified in UI)"},
+  "seed_data_creation": "During pytest: several deposit adjustments and stock adjustments on seed products/customers (approx +90k/-40k on Warung Bu Siti & Pangkalan Jaya Abadi deposits; +/- deltas on 1 LPG product then clamp). During UI test: 1 stock adjust on 'Air Isi Ulang RO 19L' (+2 sold, -1 filled), 1 deposit reduction Rp15.000 + 1 deposit reduction Rp12.000 on Pangkalan Jaya Abadi ('TEST_iter4 UI').",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration-4 testIDs: /stok adjust modal -> adj-filled, adj-filled-minus, adj-filled-plus, adj-sold, adj-sold-minus, adj-sold-plus, adj-empty (hidden for refill), adj-empty-minus, adj-empty-plus, save-adjust-button. /pelanggan detail -> topup-button (all auth users), reduce-deposit-button (owner only), dep-amount-input, dep-reason-input, submit-deposit-adjust-button. Existing: adjust-receivable-button, adj-amount-input, adj-reason-input, submit-adjust-button (owner-only receivable koreksi). Auth: login-email-input, login-password-input, login-submit-button, logout-button on Beranda header. Backend contract change: /api/customers/{id}/deposit is now JSON body {amount, reason?} (NOT query params). Backend pytest suite runs in ~14s: cd /app/backend && pytest tests/ -v. Route guard for logged-out users hitting protected /pelanggan etc. is NOT enforced client-side - screens render but API calls fail; not blocking iter-4 but worth adding.",
+  "rca_of_issue": "N/A - all 4 iter-4 fixes verified working end-to-end. Only pre-existing warnings (pointerEvents/shadow* deprecations) and an out-of-scope observation (no client-side route guard for protected tabs when logged out) remain."
+}

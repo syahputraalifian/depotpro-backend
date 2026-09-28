@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { router } from "expo-router";
 import { storage } from "@/src/utils/storage";
 import { api, TOKEN_KEY } from "@/src/api";
 
@@ -47,8 +48,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    await storage.secureRemove(TOKEN_KEY);
+    // 1. wipe auth token from secure storage
+    try { await storage.secureRemove(TOKEN_KEY); } catch {}
+    // 2. reset global user state (owner/cashier/driver/warehouse)
     setUser(null);
+    // 3. clean hard-redirect to the login screen
+    router.replace("/login");
   };
 
   return (

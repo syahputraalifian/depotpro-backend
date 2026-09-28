@@ -1,4 +1,4 @@
-import { Tabs } from "expo-router";
+import { Tabs, Redirect } from "expo-router";
 import { Platform } from "react-native";
 import Icon from "@react-native-vector-icons/ionicons";
 import { useTheme } from "@/src/theme";
@@ -14,7 +14,13 @@ const VISIBILITY: Record<string, Role[]> = {
 
 export default function TabsLayout() {
   const { colors } = useTheme();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  // session guard: block protected tabs when not authenticated
+  if (!loading && !user) {
+    return <Redirect href="/login" />;
+  }
+
   const role = (user?.role || "cashier") as Role;
 
   const canSee = (name: string) => VISIBILITY[name]?.includes(role);

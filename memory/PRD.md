@@ -53,6 +53,12 @@ Sistem aplikasi manajemen bisnis terpadu (ERP & POS) untuk usaha Agen LPG, Air M
 - **Financial Report module** (`/reports`, owner/cashier): period filter Harian/Bulanan/Tahunan; auto summary of Omset (tunai/transfer/QRIS/deposit/pelunasan piutang), Total HPP, Beban Operasional, Laba Bersih Operasional, Piutang Belum Lunas; bar trend chart (7/12/5 pts); "Catat Beban" (POST /finance/expense, 7 kategori); Ekspor PDF (expo-print) & CSV (expo-file-system+sharing). pembelian_supplier dikecualikan dari beban operasional.
 - Verified: 52/52 backend tests pass; frontend real-time + labels + reports all green.
 
+## Implemented (2026-09-28) — Iteration 4 (stock adjust, deposit correction, logout/session)
+- **Stock adjustment lengkap**: modal "Sesuaikan Stok" kini punya 3 counter +/- independen & editable — Stok Isi, Jumlah Terjual, Wadah Kosong (Wadah disembunyikan utk Isi Ulang), tiap baris menampilkan "Saat ini → preview". Simpan → POST /products/{id}/adjust {stock_filled_delta, total_sold_delta, stock_empty_delta}; backend clamp ke 0 bila negatif; kartu produk update real-time.
+- **Koreksi/Kurangi Deposit**: tombol owner-only "Kurangi Deposit" + alasan; /customers/{id}/deposit kini JSON body {amount, reason} (amount negatif = koreksi, dicatat cash-out koreksi_deposit; ditolak bila saldo < 0; negatif khusus owner). koreksi_deposit dikecualikan dari beban operasional laporan.
+- **Bug Logout & Session**: signOut menghapus token + reset state + hard-redirect ke /login; tambahan route-guard di (tabs)/_layout (Redirect ke /login bila tak ada sesi) sehingga akses langsung URL tab terproteksi.
+- Verified: 65/65 backend tests pass; keempat perbaikan + guard sesi hijau.
+
 ## Next Tasks
 - Add depot production module (bahan baku & filter) — explicitly in original spec.
 - Add supplier purchase + accounts payable UI (backend /purchases + /payables exist).
