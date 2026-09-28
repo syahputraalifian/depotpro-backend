@@ -152,8 +152,11 @@ export default function Stok() {
                 <Badge text={CATEGORY_LABELS[p.category]} bg={colors.brandTertiary} fg={colors.onBrandTertiary} />
               </View>
               <View style={styles.statRow}>
-                <Stat label="Isi Gudang" value={p.stock_filled} color={low ? colors.error : colors.brandPrimary} />
-                <Stat label="Kosong" value={p.stock_empty} color={colors.assetGallon} />
+                <Stat label="Tersisa" value={p.stock_filled} color={low ? colors.error : colors.success} />
+                <Stat label="Terjual" value={p.total_sold || 0} color={colors.onSurfaceSecondary} />
+                {p.category !== "refill" && (
+                  <Stat label="Wadah Kosong" value={p.stock_empty} color={colors.assetGallon} />
+                )}
                 <Stat label="Min. Stok" value={p.reorder_point} color={colors.muted} />
               </View>
               {low && (

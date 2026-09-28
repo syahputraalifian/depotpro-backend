@@ -115,6 +115,7 @@ class Product(BaseModel):
     stock_filled: int = 0        # isi di gudang
     stock_empty: int = 0         # kosong di gudang
     reorder_point: int = 10
+    total_sold: int = 0          # akumulasi unit terjual
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -203,6 +204,7 @@ class Transaction(BaseModel):
     tier: str
     status: Literal["paid", "outstanding"] = "paid"
     amount_paid: float = 0
+    total_hpp: float = 0
     due_date: Optional[datetime] = None
     containers_out: int = 0
     containers_in: int = 0
@@ -258,6 +260,12 @@ class POCreate(BaseModel):
 
 class SettingsIn(BaseModel):
     default_receipt_option: Literal["print", "whatsapp", "skip"] = "whatsapp"
+
+
+class ExpenseCreate(BaseModel):
+    category: Literal["bbm", "gaji", "listrik", "maintenance_filter", "penyusutan", "sewa", "lainnya"]
+    amount: float
+    description: Optional[str] = None
 
 
 # ============================ HELPERS ============================
@@ -635,11 +643,18 @@ async def create_transaction(data: TransactionCreate, user: dict = Depends(requi
         drv = await db.users.find_one({"id": data.driver_id})
         driver_name = drv["name"] if drv else None
 
+    # snapshot HPP of goods sold (for period P&L)
+    prod_map = {}
+    for it in data.items:
+        if it.product_id not in prod_map:
+            prod_map[it.product_id] = await db.products.find_one({"id": it.product_id})
+    total_hpp = round(sum((prod_map.get(it.product_id) or {}).get("hpp", 0) * it.qty for it in data.items), 2)
+
     txn = Transaction(
         invoice_no=invoice, customer_id=data.customer_id, customer_name=cust_name,
         cashier_id=user["id"], cashier_name=user["name"],
         driver_id=data.driver_id, driver_name=driver_name,
-        items=data.items, total=total,
+        items=data.items, total=total, total_hpp=total_hpp,
         payment_method=data.payment_method, channel=data.channel, tier=data.tier,
         status="outstanding" if is_outstanding else "paid",
         amount_paid=0 if is_outstanding else (data.amount_paid or total),
@@ -647,9 +662,9 @@ async def create_transaction(data: TransactionCreate, user: dict = Depends(requi
     )
     await db.transactions.insert_one(txn.model_dump())
 
-    # stock movements: reduce filled, increase empty (returned exchange)
+    # stock movements: reduce filled, increase empty (returned exchange), track sold
     for it in data.items:
-        inc = {"stock_filled": -it.qty}
+        inc = {"stock_filled": -it.qty, "total_sold": it.qty}
         if it.is_exchange:
             inc["stock_empty"] = it.qty
         await db.products.update_one({"id": it.product_id}, {"$inc": inc})
@@ -844,6 +859,127 @@ async def cashflow(user: dict = Depends(require_roles(Role.owner))):
 async def receivables(user: dict = Depends(require_roles(Role.owner, Role.cashier))):
     items = await db.transactions.find({"status": "outstanding"}).sort("due_date", 1).to_list(500)
     return [Transaction(**i) for i in items]
+
+
+EXPENSE_LABELS = {
+    "bbm": "BBM Armada", "gaji": "Gaji Karyawan", "listrik": "Listrik Depot",
+    "maintenance_filter": "Perawatan Filter", "penyusutan": "Penyusutan Wadah/Armada",
+    "sewa": "Sewa/Tempat", "lainnya": "Lain-lain", "pelunasan_piutang": "Pelunasan Piutang",
+    "penjualan": "Penjualan", "setoran_driver": "Setoran Driver",
+    "pembelian_supplier": "Pembelian Supplier", "topup_deposit": "Top-up Deposit",
+}
+
+
+@api.post("/finance/expense")
+async def add_expense(data: ExpenseCreate, user: dict = Depends(require_roles(Role.owner))):
+    doc = {"id": new_id(), "type": "out", "category": data.category, "amount": data.amount,
+           "description": data.description or EXPENSE_LABELS.get(data.category, data.category),
+           "created_at": now_utc()}
+    await db.cash_entries.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+def _norm_dt(v):
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v)
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    return v
+
+
+def _window_metrics(txns, entries, start, end):
+    """Compute income/hpp/expenses/net/outstanding for [start, end)."""
+    income = {"cash": 0.0, "transfer": 0.0, "qris": 0.0, "deposit": 0.0, "piutang": 0.0}
+    hpp_total = 0.0
+    outstanding_total = 0.0
+    for t in txns:
+        c = _norm_dt(t["created_at"])
+        if not (start <= c < end):
+            continue
+        m = t.get("payment_method")
+        if m in ("cash", "transfer", "qris"):
+            income[m] += t["total"]
+        elif m == "deposit":
+            income["deposit"] += t["total"]
+        hpp_total += t.get("total_hpp", 0)
+        if t.get("status") == "outstanding":
+            outstanding_total += t["total"] - t.get("amount_paid", 0)
+    expenses = {}
+    for e in entries:
+        c = _norm_dt(e["created_at"])
+        if not (start <= c < end):
+            continue
+        cat = e.get("category", "lainnya")
+        if e["type"] == "in" and cat == "pelunasan_piutang":
+            income["piutang"] += e["amount"]
+        elif e["type"] == "out" and cat != "pembelian_supplier":
+            expenses[cat] = expenses.get(cat, 0) + e["amount"]
+    income_total = round(sum(income.values()), 2)
+    expenses_total = round(sum(expenses.values()), 2)
+    net = round(income_total - hpp_total - expenses_total, 2)
+    return {
+        "income": {k: round(v, 2) for k, v in income.items()},
+        "income_total": income_total,
+        "hpp_total": round(hpp_total, 2),
+        "expenses": [{"category": k, "label": EXPENSE_LABELS.get(k, k), "amount": round(v, 2)}
+                     for k, v in sorted(expenses.items(), key=lambda x: -x[1])],
+        "expenses_total": expenses_total,
+        "net_profit": net,
+        "outstanding_total": round(outstanding_total, 2),
+    }
+
+
+@api.get("/finance/report")
+async def finance_report(period: str = "monthly",
+                         user: dict = Depends(require_roles(Role.owner, Role.cashier))):
+    now = datetime.now(timezone.utc)
+    txns = await db.transactions.find().to_list(10000)
+    entries = await db.cash_entries.find().to_list(20000)
+
+    if period == "daily":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        label = start.strftime("%d %b %Y")
+    elif period == "yearly":
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = start.replace(year=start.year + 1)
+        label = f"Tahun {start.year}"
+    else:  # monthly
+        period = "monthly"
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        nm = start.month % 12 + 1
+        ny = start.year + (1 if start.month == 12 else 0)
+        end = start.replace(year=ny, month=nm)
+        label = start.strftime("%B %Y")
+
+    summary = _window_metrics(txns, entries, start, end)
+
+    # trend series
+    trend = []
+    if period == "daily":
+        for i in range(6, -1, -1):
+            s = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i)
+            e = s + timedelta(days=1)
+            m = _window_metrics(txns, entries, s, e)
+            trend.append({"label": s.strftime("%d/%m"), "income": m["income_total"], "profit": m["net_profit"]})
+    elif period == "yearly":
+        for i in range(4, -1, -1):
+            y = now.year - i
+            s = now.replace(year=y, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            e = s.replace(year=y + 1)
+            m = _window_metrics(txns, entries, s, e)
+            trend.append({"label": str(y), "income": m["income_total"], "profit": m["net_profit"]})
+    else:
+        for mo in range(1, 13):
+            s = now.replace(month=mo, day=1, hour=0, minute=0, second=0, microsecond=0)
+            nm = mo % 12 + 1
+            ny = now.year + (1 if mo == 12 else 0)
+            e = s.replace(year=ny, month=nm)
+            m = _window_metrics(txns, entries, s, e)
+            trend.append({"label": s.strftime("%b"), "income": m["income_total"], "profit": m["net_profit"]})
+
+    return {"period": period, "label": label, **summary, "trend": trend}
 
 
 # ============================ ASSET BALANCE (Neraca Wadah) ============================

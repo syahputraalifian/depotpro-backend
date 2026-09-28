@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 3 fully verified end-to-end. Backend: 52/52 pytest passed (12 new tests in test_iteration3.py). Verified (a) POST /api/transactions increments product.total_sold by qty and stores transaction.total_hpp = hpp*qty (Le Minerale sale: total_sold 3→5, stock_filled decremented, total_hpp populated); (b) GET /api/finance/report for daily/monthly/yearly returns all required keys (label, income{cash,transfer,qris,deposit,piutang}, income_total, hpp_total, expenses[], expenses_total, net_profit, outstanding_total, trend) with trend lengths 7/12/5; (c) net_profit = income_total - hpp_total - expenses_total (formula-validated); (d) POST /api/finance/expense (owner) accepts all 7 categories (bbm, gaji, listrik, maintenance_filter, penyusutan, sewa, lainnya), increments expenses_total, and cashier/driver receive 403; (e) pembelian_supplier cash-out from PO receive is EXCLUDED from operational expenses (verified by receiving PO and confirming expenses_total unchanged). Frontend (mobile 390x844): Owner login OK, Dashboard 'Laporan Keuangan' quick action navigates to /reports; period chips (period-daily/monthly/yearly) switch data live; hero renders 'Laba Bersih Operasional Rp610.088', metric cards (Total Omset, Total HPP, Beban Operasional, Piutang Belum Lunas) all render with correct values, income breakdown (Tunai/Transfer/QRIS/Deposit/Pelunasan Piutang) displays, bar trend chart renders with Omset+Laba legend, expenses list shows all 7 categories, 'Catat Beban' modal opens with 7 exp-cat chips + exp-amount + exp-desc + save-expense (save posts and refreshes list), export-pdf/export-csv buttons present and don't crash on web. FIX 1 real-time verified: after cash checkout of 1x Air Isi Ulang RO 19L, product card updated immediately WITHOUT refresh: Tersisa 169→168, Terjual 3→4. FIX 2 label format verified: refill product shows 'Tersisa: n | Terjual: n' (NO Wadah Kosong), LPG and galon_brand show 'Tersisa: n | Terjual: n | Wadah Kosong: n', color green when stock_filled>reorder_point (all in-stock products verified green).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "reports.tsx hero Card", "issue": "testID='report-net' on <Card> is not forwarded to the DOM (data-testid attribute not present in web build). Hero renders correctly but not directly selectable by that testID.", "testID": "report-net", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard quick-actions", "issues": ["'Setoran' label appears twice in the 8-tile quick-action grid (rows 1 col 3 and row 2 col 4). One of them is likely meant to be a different label."]},
+      {"screen": "POS product list", "issues": ["Seed/test data pollution: 5 duplicate 'TEST_LPG5' cards appear from prior test runs. Consider cleaning TEST_-prefixed products on startup or in test teardown."]}
+    ],
+    "react_native_issues": [
+      {"component": "props.pointerEvents (console warning)", "issue": "'props.pointerEvents is deprecated. Use style.pointerEvents' - carried over from iteration 2, still present. Reference: react-native-web / library-level."},
+      {"component": "shadow* style props (console warning)", "issue": "'\"shadow*\" style props are deprecated. Use \"boxShadow\"' - carried over from iteration 2."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Forward testID prop through the <Card> component in /app/frontend/src/ui/... so 'report-net' becomes selectable by test automation.",
+    "(Optional) De-duplicate/clean 'TEST_LPG5' products (from prior iterations) to reduce POS clutter.",
+    "(Optional) Fix duplicate 'Setoran' label in dashboard quick-actions grid (one likely meant to be different).",
+    "(Carried) Address deprecated pointerEvents/shadow* console warnings by migrating to style.pointerEvents / boxShadow."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~1086 lines - well past the 700-line threshold. Consider splitting into modules (auth, products, transactions, po, receivables, drivers, finance, assets).",
+    "Still uses deprecated @app.on_event('startup') / 'shutdown' - migrate to FastAPI lifespan handler.",
+    "/finance/report trend loop uses now.replace(month=mo) for yearly summing across the whole current year including future months - fine for label 'Bulanan' rendering but note trend elements for future months will be zeros; acceptable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new - 12 tests)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated - 52 passed)"
+  ],
+  "success_rate": {"backend": "100% (52/52)", "frontend": "100% (all iter-3 flows verified)"},
+  "seed_data_creation": "During UI test: 1 cashier POS transaction on 'Air Isi Ulang RO 19L' (Rp6.500 cash) + 1 operational expense (listrik Rp50.000 'TEST_UI iter3'). During pytest: multiple TEST_iter3 expenses across 7 categories (~131k total), 1 Le Minerale sale, 1 PO on Le Minerale (received). Plus persisted TEST_LPG5 duplicates from prior iterations.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration-3 testIDs: /reports screen -> period-daily/monthly/yearly, add-expense-button, exp-cat-{bbm|gaji|listrik|maintenance_filter|penyusutan|sewa|lainnya}, exp-amount, exp-desc, save-expense, export-pdf, export-csv. Dashboard: open-reports-button (visible to owner+cashier). Backend endpoints: GET /api/finance/report?period=daily|monthly|yearly (owner+cashier), POST /api/finance/expense (owner only, 403 for others). Backend pytest suite runs in ~10s: `cd /app/backend && pytest tests/ -v`. Note: DB state persists across pytest runs so absolute expenses_total/hpp_total values drift, but tests use delta-based assertions and are resilient. Note also 'report-net' testID does NOT reach the DOM (Card component doesn't forward testID).",
+  "rca_of_issue": "N/A - all iteration 3 features (FIX 1 real-time state, FIX 2 stock label format+color+refill exclusion, FEATURE 3 financial report backend+frontend) verified. No blocking bugs found. Only minor testability nit (report-net testID) and pre-existing warnings carried from iteration 2."
+}

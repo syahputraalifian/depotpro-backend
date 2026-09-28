@@ -84,6 +84,17 @@ export default function Dashboard() {
           </View>
         )}
 
+        {canFinance && (
+          <Pressable testID="open-reports-button" onPress={() => router.push("/reports")} style={styles.reportBtn}>
+            <Icon name="bar-chart" size={22} color={colors.onBrandPrimary} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.reportBtnTitle}>Laporan Keuangan</Text>
+              <Text style={styles.reportBtnSub}>Harian · Bulanan · Tahunan + Ekspor PDF/CSV</Text>
+            </View>
+            <Icon name="chevron-forward" size={20} color={colors.onBrandPrimary} />
+          </Pressable>
+        )}
+
         {/* Quick actions */}
         <View style={styles.quickRow}>
           {(user?.role === "owner" || user?.role === "cashier") && (
@@ -105,7 +116,7 @@ export default function Dashboard() {
             <QuickAction icon="people-circle" label="Kelola Kurir" onPress={() => router.push("/manage-users")} />
             <QuickAction icon="settings" label="Pengaturan" onPress={() => router.push("/settings")} />
             <QuickAction icon="pricetags" label="Katalog Harga" onPress={() => router.push("/(tabs)/stok")} />
-            <QuickAction icon="car-sport" label="Setoran" onPress={() => router.push("/(tabs)/driver")} />
+            <QuickAction icon="bar-chart" label="Laporan" onPress={() => router.push("/reports")} />
           </View>
         )}
 
@@ -227,6 +238,9 @@ const useStyles = makeStyles((c) => ({
   kpiValue: { fontSize: 18, fontWeight: "800", color: c.onSurface, marginTop: 8 },
   kpiLabel: { fontSize: 12, color: c.muted, marginTop: 2 },
   quickRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
+  reportBtn: { flexDirection: "row", alignItems: "center", backgroundColor: c.brand, borderRadius: 16, padding: 16, marginBottom: 16 },
+  reportBtnTitle: { color: c.onBrand, fontSize: 16, fontWeight: "800" },
+  reportBtnSub: { color: c.onBrand, opacity: 0.8, fontSize: 12, marginTop: 2 },
   quickItem: { alignItems: "center", flex: 1 },
   quickIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 6 },
   quickLabel: { fontSize: 11, color: c.onSurfaceSecondary, fontWeight: "600" },

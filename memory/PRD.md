@@ -47,6 +47,12 @@ Sistem aplikasi manajemen bisnis terpadu (ERP & POS) untuk usaha Agen LPG, Air M
 - **Multi-driver/fleet**: /manage-users screen (owner) add/edit/soft-delete drivers with phone/vehicle_type/plate_number; POS "Antar" channel with courier picker; transaction stores driver_id/driver_name; recon report per driver.
 - Verified: 40/40 backend tests pass, frontend flows functional.
 
+## Implemented (2026-09-28) — Iteration 3 (real-time state, stock labels, financial reports)
+- **Real-time POS state**: after every transaction, POS re-fetches products (`load()`), so Tersisa/Terjual update instantly with no manual refresh (incl. "Selesai Tanpa Struk").
+- **Stock label upgrade**: product cards show "Tersisa: {isi} | Terjual: {total_sold}"; LPG & Galon also show "Wadah Kosong: {kosong}"; Tersisa colored green (>reorder) / red (≤reorder). Backend increments `product.total_sold` and stores `transaction.total_hpp` per sale.
+- **Financial Report module** (`/reports`, owner/cashier): period filter Harian/Bulanan/Tahunan; auto summary of Omset (tunai/transfer/QRIS/deposit/pelunasan piutang), Total HPP, Beban Operasional, Laba Bersih Operasional, Piutang Belum Lunas; bar trend chart (7/12/5 pts); "Catat Beban" (POST /finance/expense, 7 kategori); Ekspor PDF (expo-print) & CSV (expo-file-system+sharing). pembelian_supplier dikecualikan dari beban operasional.
+- Verified: 52/52 backend tests pass; frontend real-time + labels + reports all green.
+
 ## Next Tasks
 - Add depot production module (bahan baku & filter) — explicitly in original spec.
 - Add supplier purchase + accounts payable UI (backend /purchases + /payables exist).

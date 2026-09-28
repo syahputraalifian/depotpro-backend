@@ -122,6 +122,8 @@ export default function POS() {
       setPayment("cash");
       setChannel("pos");
       setSelDriver(null);
+      // real-time state: re-fetch products so stock/terjual update instantly (no manual refresh)
+      load();
       // receipt: run default if not skip, else always show options modal for choice
       setReceiptInv({ ...inv, _phone: c?.phone });
       if (defaultReceipt === "print") runReceipt("print", inv);
@@ -186,9 +188,15 @@ export default function POS() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.prodName}>{p.name}</Text>
                 <Text style={styles.prodPrice}>{rupiah(priceOf(p))}</Text>
-                <View style={{ flexDirection: "row", gap: 6, marginTop: 6, alignItems: "center" }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
                   <Badge text={CATEGORY_LABELS[p.category]} bg={colors.surfaceTertiary} fg={colors.onSurfaceTertiary} />
-                  <Text style={styles.stockText}>Stok: {p.stock_filled}</Text>
+                  <Text style={[styles.stockText, { color: p.stock_filled > p.reorder_point ? colors.success : colors.error }]}>
+                    Tersisa: {p.stock_filled}
+                  </Text>
+                  <Text style={styles.soldText}>| Terjual: {p.total_sold || 0}</Text>
+                  {p.category !== "refill" && (
+                    <Text style={styles.emptyText}>| Wadah Kosong: {p.stock_empty}</Text>
+                  )}
                 </View>
                 {p.is_returnable && c?.qty > 0 && (
                   <Pressable testID={`exchange-${p.id}`} onPress={() => toggleExchange(p.id)} style={styles.exchangeRow}>
@@ -320,7 +328,9 @@ const useStyles = makeStyles((c) => ({
   prodCard: { flexDirection: "row", alignItems: "center", backgroundColor: c.surfaceSecondary, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: c.border, gap: 10 },
   prodName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
   prodPrice: { fontSize: 15, fontWeight: "800", color: c.brandPrimary, marginTop: 2 },
-  stockText: { fontSize: 11, color: c.muted },
+  stockText: { fontSize: 11, fontWeight: "700" },
+  soldText: { fontSize: 11, color: c.muted, fontWeight: "600" },
+  emptyText: { fontSize: 11, color: c.assetGallon, fontWeight: "600" },
   exchangeRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
   exchangeText: { fontSize: 12, color: c.onSurfaceSecondary },
   stepper: { alignItems: "center", gap: 6 },

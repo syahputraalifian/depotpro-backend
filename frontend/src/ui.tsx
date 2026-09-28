@@ -178,9 +178,9 @@ export function Badge({ text, bg, fg }: { text: string; bg: string; fg: string }
 }
 
 // ---------------- Card ----------------
-export function Card({ children, style }: { children: React.ReactNode; style?: any }) {
+export function Card({ children, style, testID }: { children: React.ReactNode; style?: any; testID?: string }) {
   const styles = useCardStyles();
-  return <View style={[styles.card, style]}>{children}</View>;
+  return <View testID={testID} style={[styles.card, style]}>{children}</View>;
 }
 
 const useCardStyles = makeStyles((c) => ({
