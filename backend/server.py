@@ -914,6 +914,10 @@ async def reset_finance_history(user: dict = Depends(require_roles(Role.owner)))
     res = await db.cash_entries.update_many(
         {"deleted": {"$ne": True}}, {"$set": {"deleted": True, "deleted_at": now_utc()}})
     await db.transactions.delete_many({})
+    await db.sales.delete_many({})
+    await db.orders.delete_many({})
+    await db.deliveries.delete_many({})
+    await db.sales_records.delete_many({})
     return {"ok": True, "cleared": res.modified_count}
 
 
