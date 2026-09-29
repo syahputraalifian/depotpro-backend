@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "depotpro-backend"
+version = "0.1.0"
+description = "DepotPro Backend Service"
+authors = ["Syahputra Alifian <syahputraalifian@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "*"
+uvicorn = "*"
+motor = "*"
+pydantic = "*"
+python-dotenv = "*"
+pymongo = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
