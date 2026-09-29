@@ -124,7 +124,66 @@ async def get_transactions():
 @app.get("/api/reports/financial")
 async def get_reports():
     return {"daily": 0, "monthly": 0, "yearly": 0, "data": []}
+# ====================================================================
+# API PRODUCT HANDLERS (Mencegah Request Jatuh ke Catch-All Interceptor)
+# ====================================================================
 
+from pydantic import BaseModel
+from typing import Optional
+import uuid
+
+class ProductModel(BaseModel):
+    name: str
+    category: str = "lpg"
+    is_returnable: bool = True
+    cost_price: float = 0
+    freight_cost: float = 0
+    depreciation_cost: float = 0
+    price_eceran: float = 0
+    price_warung: float = 0
+    price_pangkalan: float = 0
+    price_korporat: float = 0
+    deposit_amount: float = 0
+    stock_filled: int = 0
+    stock_empty: int = 0
+    reorder_point: int = 10
+
+@app.post("/products")
+@app.post("/api/products")
+async def create_product_real(product: ProductModel):
+    new_product = product.dict()
+    new_product["id"] = str(uuid.uuid4())
+    new_product["total_sold"] = 0
+    
+    # Jika server menggunakan state memory internal
+    if hasattr(app, "state") and hasattr(app.state, "products"):
+        if isinstance(app.state.products, list):
+            app.state.products.append(new_product)
+            
+    print(f"[SUCCESS] Produk berhasil ditambahkan: {new_product['name']}")
+    return new_product
+
+@app.get("/products")
+@app.get("/api/products")
+async def get_products_real():
+    if hasattr(app, "state") and hasattr(app.state, "products"):
+        return app.state.products
+    return []
+
+
+# ====================================================================
+# CATCH-ALL WILDCARD INTERCEPTOR (Harus Berada di Paling Bawah File)
+# ====================================================================
+
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def catch_all(request: Request, full_path: str):
+    print(f"REQUEST DIPEGANG CATCH-ALL: {request.method} /{full_path}")
+    return {
+        "status": "success",
+        "message": f"Intercepted: {full_path}",
+        "data": [],
+        "result": []
+    }
 # ==========================================
 # CATCH-ALL WILDCARD (Satu-satunya Penuntas 404)
 # ==========================================
