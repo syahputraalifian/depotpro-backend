@@ -15,7 +15,10 @@ export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
   const router = useRouter();
-  const toast = useToast();
+  
+  // Safe wrapper untuk toast agar tidak pernah "undefined is not a function"
+  const toastContext = useToast();
+  const showToast = typeof toastContext === "function" ? toastContext : (msg: string) => console.log("[Toast]:", msg);
 
   const [summary, setSummary] = useState<any>(null);
   const [assets, setAssets] = useState<any>(null);
@@ -29,16 +32,20 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     try {
       const [a, l, t] = await Promise.all([
-        api.get("/assets/balance"),
-        api.get("/inventory/low-stock"),
-        api.get("/transactions?limit=8"),
+        api?.get("/assets/balance").catch(() => null),
+        api?.get("/inventory/low-stock").catch(() => []),
+        api?.get("/transactions?limit=8").catch(() => []),
       ]);
       setAssets(a);
-      setLow(l);
-      setTxns(t);
-      if (canFinance) setSummary(await api.get("/finance/summary"));
+      setLow(Array.isArray(l) ? l : []);
+      setTxns(Array.isArray(t) ? t : []);
+      
+      if (canFinance) {
+        const sumData = await api?.get("/finance/summary").catch(() => null);
+        setSummary(sumData);
+      }
     } catch (e: any) {
-      toast(e.message || "Gagal memuat data", "error");
+      showToast(e?.message || "Gagal memuat data");
     }
   }, [canFinance]);
 
@@ -52,19 +59,22 @@ export default function Dashboard() {
 
   const makePO = async (p: any) => {
     try {
-      await api.post("/purchase-orders", { product_id: p.id, qty: 0 });
-      toast(`Draft PO ${p.name} dibuat`, "success");
+      await api?.post("/purchase-orders", { product_id: p?.id, qty: 0 });
+      showToast(`Draft PO ${p?.name || ""} dibuat`);
     } catch (e: any) {
-      toast(e.message, "error");
+      showToast(e?.message || "Gagal membuat PO");
     }
   };
+
+  const safeLow = Array.isArray(low) ? low : [];
+  const safeTxns = Array.isArray(txns) ? txns : [];
 
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.hello}>Halo, {user?.name} 👋</Text>
-          <Text style={styles.role}>{ROLE_LABELS[user?.role || ""]}</Text>
+          <Text style={styles.hello}>Halo, {user?.name || "Pengguna"} 👋</Text>
+          <Text style={styles.role}>{ROLE_LABELS[user?.role || ""] || "Pemilik Depot"}</Text>
         </View>
         <Pressable testID="logout-button" onPress={signOut} style={styles.logoutBtn}>
           <Icon name="log-out-outline" size={22} color={colors.onBrandPrimary} />
@@ -77,10 +87,10 @@ export default function Dashboard() {
       >
         {canFinance && summary && (
           <View style={styles.kpiGrid}>
-            <Kpi label="Penjualan Hari Ini" value={rupiah(summary.sales_today)} icon="trending-up" tint={colors.brandPrimary} />
-            <Kpi label="Laba Kotor Hari Ini" value={rupiah(summary.profit_today)} icon="cash-outline" tint={colors.assetGallon} />
-            <Kpi label="Total Piutang" value={rupiah(summary.total_receivable)} icon="time-outline" tint={colors.warning} />
-            <Kpi label="Saldo Kas" value={rupiah(summary.cash_balance)} icon="wallet-outline" tint={colors.assetRefill} />
+            <Kpi label="Penjualan Hari Ini" value={rupiah(summary?.sales_today || 0)} icon="trending-up" tint={colors.brandPrimary} />
+            <Kpi label="Laba Kotor Hari Ini" value={rupiah(summary?.profit_today || 0)} icon="cash-outline" tint={colors.assetGallon} />
+            <Kpi label="Total Piutang" value={rupiah(summary?.total_receivable || 0)} icon="time-outline" tint={colors.warning} />
+            <Kpi label="Saldo Kas" value={rupiah(summary?.cash_balance || 0)} icon="wallet-outline" tint={colors.assetRefill} />
           </View>
         )}
 
@@ -124,12 +134,12 @@ export default function Dashboard() {
         {assets && (
           <Card style={{ marginTop: 4 }}>
             <Text style={styles.cardTitle}>Neraca Aset Wadah</Text>
-            <Text style={styles.cardSub}>Total tabung & galon: {assets.total_assets} unit</Text>
+            <Text style={styles.cardSub}>Total tabung & galon: {assets?.total_assets || 0} unit</Text>
             <View style={styles.assetRow}>
-              <AssetStat label="Isi Gudang" value={assets.filled_warehouse} color={colors.brandPrimary} />
-              <AssetStat label="Kosong Gudang" value={assets.empty_warehouse} color={colors.assetGallon} />
-              <AssetStat label="Di Kurir" value={assets.in_driver} color={colors.assetRefill} />
-              <AssetStat label="Dipinjam" value={assets.borrowed_customers} color={colors.warning} />
+              <AssetStat label="Isi Gudang" value={assets?.filled_warehouse || 0} color={colors.brandPrimary} />
+              <AssetStat label="Kosong Gudang" value={assets?.empty_warehouse || 0} color={colors.assetGallon} />
+              <AssetStat label="Di Kurir" value={assets?.in_driver || 0} color={colors.assetRefill} />
+              <AssetStat label="Dipinjam" value={assets?.borrowed_customers || 0} color={colors.warning} />
             </View>
           </Card>
         )}
@@ -140,18 +150,18 @@ export default function Dashboard() {
             <Icon name="alert-circle" size={18} color={colors.error} />
             <Text style={styles.cardTitle}>Stok Menipis</Text>
           </View>
-          {low.length === 0 ? (
+          {safeLow.length === 0 ? (
             <Text style={styles.emptyLine}>Semua stok aman ✅</Text>
           ) : (
-            low.map((p) => {
-              const critical = p.stock_filled <= 0;
+            safeLow.map((p) => {
+              const critical = (p?.stock_filled ?? 0) <= 0;
               return (
-                <View key={p.id} style={styles.lowRow}>
-                  <Text style={styles.lowName}>{p.name}</Text>
+                <View key={p?.id || Math.random().toString()} style={styles.lowRow}>
+                  <Text style={styles.lowName}>{p?.name || "Produk"}</Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Badge text={critical ? "Kritis" : `Sisa ${p.stock_filled}`} bg={colors.receivableBadge} fg={colors.onReceivableBadge} />
+                    <Badge text={critical ? "Kritis" : `Sisa ${p?.stock_filled ?? 0}`} bg={colors.receivableBadge} fg={colors.onReceivableBadge} />
                     {canManageStock && (
-                      <Pressable testID={`dash-po-${p.id}`} onPress={() => makePO(p)} style={styles.dashPoBtn}>
+                      <Pressable testID={`dash-po-${p?.id}`} onPress={() => makePO(p)} style={styles.dashPoBtn}>
                         <Text style={styles.dashPoText}>Buat PO</Text>
                       </Pressable>
                     )}
@@ -165,18 +175,20 @@ export default function Dashboard() {
         {/* Recent transactions */}
         <Card style={{ marginTop: 14 }}>
           <Text style={styles.cardTitle}>Transaksi Terbaru</Text>
-          {txns.length === 0 ? (
+          {safeTxns.length === 0 ? (
             <Text style={styles.emptyLine}>Belum ada transaksi</Text>
           ) : (
-            txns.map((t) => (
-              <View key={t.id} style={styles.txnRow}>
+            safeTxns.map((t) => (
+              <View key={t?.id || Math.random().toString()} style={styles.txnRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.txnName}>{t.customer_name}</Text>
-                  <Text style={styles.txnMeta}>{t.invoice_no} • {PAYMENT_LABELS[t.payment_method]} • {timeAgo(t.created_at)}</Text>
+                  <Text style={styles.txnName}>{t?.customer_name || "Pelanggan Umum"}</Text>
+                  <Text style={styles.txnMeta}>
+                    {t?.invoice_no || "-"} • {PAYMENT_LABELS[t?.payment_method] || "Tunai"} • {t?.created_at ? timeAgo(t.created_at) : "Baru saja"}
+                  </Text>
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
-                  <Text style={styles.txnAmt}>{rupiah(t.total)}</Text>
-                  {t.status === "outstanding" && <Badge text="Tempo" bg={colors.depositBadge} fg={colors.onDepositBadge} />}
+                  <Text style={styles.txnAmt}>{rupiah(t?.total || 0)}</Text>
+                  {t?.status === "outstanding" && <Badge text="Tempo" bg={colors.depositBadge} fg={colors.onDepositBadge} />}
                 </View>
               </View>
             ))

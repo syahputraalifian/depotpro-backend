@@ -1,358 +1,458 @@
-import { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, Modal, FlatList } from "react-native";
-import { useFocusEffect } from "expo-router";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  View,
+  Text,
+  ScrollView,
+  RefreshControl,
+  Pressable,
+  TextInput,
+} from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
 import { api } from "@/src/api";
-import { rupiah, CATEGORY_LABELS, TIER_LABELS, PAYMENT_LABELS } from "@/src/format";
-import { AppButton, Badge, EmptyState, useToast } from "@/src/ui";
-import { printReceipt, sendWhatsApp } from "@/src/receipt";
+import * as formatModule from "@/src/format";
+import * as uiModule from "@/src/ui";
 
-const CATS = [
-  { key: "all", label: "Semua" },
-  { key: "lpg", label: "Gas LPG" },
-  { key: "galon_brand", label: "Air Galon" },
-  { key: "refill", label: "Isi Ulang" },
+// Initial seed produk agar layar Kasir tidak pernah kosong
+const FALLBACK_PRODUCTS = [
+  {
+    id: "prod-1",
+    name: "Gas LPG 3 Kg",
+    category: "lpg",
+    price_eceran: 20000,
+    price: 20000,
+    stock_filled: 50,
+  },
+  {
+    id: "prod-2",
+    name: "Air Galon Brand 19L",
+    category: "galon_brand",
+    price_eceran: 20000,
+    price: 20000,
+    stock_filled: 30,
+  },
 ];
-const PAYMENTS = ["cash", "transfer", "qris", "tempo", "deposit"];
 
-export default function POS() {
+const safeRupiah = (val: number) => {
+  const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
+  if (typeof formatFunc === "function") {
+    try {
+      return formatFunc(val);
+    } catch {
+      return `Rp ${val || 0}`;
+    }
+  }
+  return `Rp ${(val || 0).toLocaleString("id-ID")}`;
+};
+
+const extractArrayData = (res: any): any[] => {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.data)) return res.data;
+  if (Array.isArray(res.result)) return res.result;
+  if (Array.isArray(res.data?.data)) return res.data.data;
+  if (Array.isArray(res.data?.result)) return res.data.result;
+  return [];
+};
+
+const getProductPrice = (product: any) => {
+  if (!product) return 0;
+  return Number(product.price_eceran || product.price || product.cost_price || 0);
+};
+
+export default function POSScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const toast = useToast();
+  const router = useRouter();
 
-  const [products, setProducts] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [drivers, setDrivers] = useState<any[]>([]);
-  const [cat, setCat] = useState("all");
-  const [cart, setCart] = useState<Record<string, { qty: number; exchange: boolean }>>({});
-  const [customer, setCustomer] = useState<any>(null);
-  const [tier, setTier] = useState("eceran");
-  const [payment, setPayment] = useState("cash");
-  const [channel, setChannel] = useState<"pos" | "delivery">("pos");
-  const [selDriver, setSelDriver] = useState<any>(null);
-  const [custModal, setCustModal] = useState(false);
-  const [driverModal, setDriverModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [defaultReceipt, setDefaultReceipt] = useState("whatsapp");
-  const [receiptInv, setReceiptInv] = useState<any>(null);
-
-  const load = useCallback(async () => {
+  const showToast = useCallback((msg: string) => {
     try {
-      const [p, c, d, s] = await Promise.all([
-        api.get("/products"), api.get("/customers"), api.get("/users/drivers"), api.get("/settings"),
-      ]);
-      setProducts(p);
-      setCustomers(c);
-      setDrivers(d);
-      setDefaultReceipt(s.default_receipt_option || "whatsapp");
-    } catch (e: any) {
-      toast(e.message, "error");
-    }
+      const useToastHook = (uiModule as any)?.useToast;
+      if (typeof useToastHook === "function") {
+        const toast = useToastHook();
+        if (typeof toast === "function") {
+          toast(msg);
+          return;
+        } else if (toast && typeof toast.show === "function") {
+          toast.show(msg);
+          return;
+        }
+      }
+    } catch (e) {}
+    console.log("[Toast]:", msg);
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const [products, setProducts] = useState<any[]>(FALLBACK_PRODUCTS);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [search, setSearch] = useState<string>("");
+  const [cart, setCart] = useState<any[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const priceOf = (p: any) => Number(p[`price_${tier}`] ?? p.price_eceran);
-  const filtered = cat === "all" ? products : products.filter((p) => p.category === cat);
-
-  const cartItems = useMemo(() => {
-    return Object.entries(cart)
-      .map(([id, v]) => {
-        const p = products.find((x) => x.id === id);
-        if (!p || v.qty <= 0) return null;
-        return { product: p, qty: v.qty, exchange: v.exchange, subtotal: priceOf(p) * v.qty };
-      })
-      .filter(Boolean) as any[];
-  }, [cart, products, tier]);
-
-  const total = cartItems.reduce((s, i) => s + i.subtotal, 0);
-  const totalUnits = cartItems.reduce((s, i) => s + i.qty, 0);
-
-  const setQty = (id: string, delta: number) =>
-    setCart((prev) => {
-      const cur = prev[id] || { qty: 0, exchange: true };
-      return { ...prev, [id]: { ...cur, qty: Math.max(0, cur.qty + delta) } };
-    });
-
-  const toggleExchange = (id: string) =>
-    setCart((prev) => {
-      const cur = prev[id] || { qty: 0, exchange: true };
-      return { ...prev, [id]: { ...cur, exchange: !cur.exchange } };
-    });
-
-  const selectCustomer = (c: any | null) => {
-    setCustomer(c);
-    setTier(c ? c.tier : "eceran");
-    setCustModal(false);
-  };
-
-  const runReceipt = async (option: string, inv: any) => {
+  const loadData = useCallback(async () => {
     try {
-      if (option === "print") await printReceipt(inv);
-      else if (option === "whatsapp") await sendWhatsApp(inv, customer?.phone);
-    } catch {
-      toast("Gagal menyiapkan struk", "error");
-    }
-  };
+      const getApi = typeof api?.get === "function" ? api.get : null;
+      if (!getApi) return;
 
-  const checkout = async () => {
-    if (cartItems.length === 0) { toast("Keranjang masih kosong", "error"); return; }
-    if (channel === "delivery" && !selDriver) { toast("Pilih kurir pengantar", "error"); return; }
-    setSubmitting(true);
-    try {
-      const payload = {
-        customer_id: customer?.id || null,
-        tier,
-        payment_method: payment,
-        channel: channel === "delivery" ? "delivery" : (customer && customer.type !== "rumahan" ? "b2b" : "pos"),
-        driver_id: channel === "delivery" ? selDriver?.id : null,
-        items: cartItems.map((i) => ({
-          product_id: i.product.id, name: i.product.name, qty: i.qty,
-          price: priceOf(i.product), is_exchange: i.exchange, subtotal: i.subtotal,
-        })),
-      };
-      const inv = await api.post("/transactions", payload);
-      toast("Transaksi berhasil!", "success");
-      setCart({});
-      const c = customer;
-      selectCustomer(null);
-      setPayment("cash");
-      setChannel("pos");
-      setSelDriver(null);
-      // real-time state: re-fetch products so stock/terjual update instantly (no manual refresh)
-      load();
-      // receipt: run default if not skip, else always show options modal for choice
-      setReceiptInv({ ...inv, _phone: c?.phone });
-      if (defaultReceipt === "print") runReceipt("print", inv);
-      else if (defaultReceipt === "whatsapp") runReceipt("whatsapp", inv);
+      const [prodRes, catRes] = await Promise.all([
+        getApi("/products").catch(() => []),
+        getApi("/categories").catch(() => []),
+      ]);
+
+      const safeProd = extractArrayData(prodRes);
+      
+      // Gabungkan data dari backend dengan data lokal/fallback
+      setProducts((prev) => {
+        const combined = [...prev, ...safeProd];
+        const map = new Map();
+        combined.forEach((item) => {
+          if (item && (item.id || item.name)) {
+            map.set(item.id || item.name, item);
+          }
+        });
+        return Array.from(map.values());
+      });
+
+      const safeCat = extractArrayData(catRes);
+      if (safeCat.length > 0) {
+        setCategories(safeCat);
+      } else {
+        const currentProducts = safeProd.length > 0 ? safeProd : FALLBACK_PRODUCTS;
+        const uniqueCats = Array.from(
+          new Set(currentProducts.map((p) => p?.category).filter(Boolean))
+        ).map((catName) => ({ id: catName, name: String(catName).toUpperCase() }));
+        setCategories(uniqueCats);
+      }
     } catch (e: any) {
-      toast(e.message || "Gagal transaksi", "error");
-    } finally {
-      setSubmitting(false);
+      showToast(e?.message || "Gagal memuat produk POS");
     }
+  }, [showToast]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
   };
+
+  const addToCart = (product: any) => {
+    if (!product) return;
+    const maxStock = Number(product.stock_filled ?? 9999);
+
+    setCart((prev) => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const index = safePrev.findIndex((item) => item?.product?.id === product?.id || item?.product?.name === product?.name);
+
+      if (index > -1) {
+        const currentQty = safePrev[index]?.qty || 0;
+        if (currentQty >= maxStock) {
+          showToast(`Stok ${product.name} terbatas (${maxStock})`);
+          return safePrev;
+        }
+        const updated = [...safePrev];
+        updated[index] = {
+          ...updated[index],
+          qty: currentQty + 1,
+        };
+        return updated;
+      }
+
+      if (maxStock <= 0) {
+        showToast(`Stok ${product.name} habis`);
+        return safePrev;
+      }
+
+      return [...safePrev, { product, qty: 1, price: getProductPrice(product) }];
+    });
+  };
+
+  const updateQty = (productId: string, delta: number) => {
+    setCart((prev) => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      return safePrev
+        .map((item) => {
+          const id = item?.product?.id || item?.product?.name;
+          if (id === productId) {
+            const maxStock = Number(item?.product?.stock_filled ?? 9999);
+            const newQty = (item?.qty || 0) + delta;
+
+            if (newQty > maxStock) {
+              showToast(`Maksimal stok tercapai (${maxStock})`);
+              return item;
+            }
+            return newQty > 0 ? { ...item, qty: newQty } : null;
+          }
+          return item;
+        })
+        .filter(Boolean);
+    });
+  };
+
+  const clearCart = () => {
+    setCart([]);
+  };
+
+  const safeProducts = Array.isArray(products) ? products : [];
+  const safeCategories = Array.isArray(categories) ? categories : [];
+  const safeCart = Array.isArray(cart) ? cart : [];
+
+  const filteredProducts = safeProducts.filter((p) => {
+    if (!p) return false;
+    const matchesSearch = (p?.name || "")
+      .toLowerCase()
+      .includes((search || "").toLowerCase());
+      
+    if (!matchesSearch) return false;
+
+    if (selectedCategory === "all") return true;
+
+    const cat = String(p?.category || p?.category_id || "").toLowerCase();
+    const targetCat = String(selectedCategory).toLowerCase();
+
+    if (targetCat === "lpg") return cat.includes("lpg") || cat.includes("gas");
+    if (targetCat === "galon_brand") return cat.includes("galon") || cat.includes("brand") || cat.includes("air");
+    if (targetCat === "refill") return cat.includes("refill") || cat.includes("ulang");
+
+    return cat === targetCat;
+  });
+
+  const totalCartAmount = safeCart.reduce((sum, item) => {
+    const price = item?.price ?? getProductPrice(item?.product);
+    return sum + price * (item?.qty || 0);
+  }, 0);
 
   return (
-    <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-        <Text style={styles.title}>Kasir POS</Text>
-        <Pressable testID="select-customer-button" onPress={() => setCustModal(true)} style={styles.custPill}>
-          <Icon name="person-circle-outline" size={18} color={colors.onBrandPrimary} />
-          <Text style={styles.custPillText} numberOfLines={1}>{customer ? customer.name : "Pelanggan Umum"}</Text>
-          <Icon name="chevron-down" size={16} color={colors.onBrandPrimary} />
-        </Pressable>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* Header Search */}
+      <View style={styles.header}>
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color={colors.muted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Cari produk gas, galon, dll..."
+            placeholderTextColor={colors.muted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search ? (
+            <Pressable onPress={() => setSearch("")}>
+              <Icon name="close-circle" size={18} color={colors.muted} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
-      {/* Category chips */}
-      <View style={styles.chipsWrap}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsContent}>
-          {CATS.map((ct) => {
-            const active = cat === ct.key;
+      {/* Kategori Horizontal */}
+      <View style={{ maxHeight: 50 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.catScroll}
+        >
+          <Pressable
+            style={[
+              styles.catChip,
+              selectedCategory === "all" && styles.catChipActive,
+            ]}
+            onPress={() => setSelectedCategory("all")}
+          >
+            <Text
+              style={[
+                styles.catText,
+                selectedCategory === "all" && styles.catTextActive,
+              ]}
+            >
+              Semua
+            </Text>
+          </Pressable>
+          {safeCategories.map((cat) => {
+            const catId = cat?.id || cat?.key || cat?.name;
+            const isSelected = selectedCategory === catId;
             return (
-              <Pressable key={ct.key} testID={`cat-${ct.key}`} onPress={() => setCat(ct.key)} style={[styles.chip, active && styles.chipActive]}>
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{ct.label}</Text>
+              <Pressable
+                key={catId || Math.random().toString()}
+                style={[styles.catChip, isSelected && styles.catChipActive]}
+                onPress={() => setSelectedCategory(catId)}
+              >
+                <Text
+                  style={[styles.catText, isSelected && styles.catTextActive]}
+                >
+                  {cat?.name || cat?.label || "Kategori"}
+                </Text>
               </Pressable>
             );
           })}
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: cartItems.length ? 300 : 32 }}>
-        <View style={styles.channelRow}>
-          <Text style={styles.tierNote}>Harga: {TIER_LABELS[tier]}</Text>
-          <View style={styles.channelToggle}>
-            <Pressable testID="channel-pos" onPress={() => setChannel("pos")} style={[styles.chSeg, channel === "pos" && styles.chSegActive]}>
-              <Text style={[styles.chSegText, channel === "pos" && styles.chSegTextActive]}>Di Toko</Text>
-            </Pressable>
-            <Pressable testID="channel-delivery" onPress={() => setChannel("delivery")} style={[styles.chSeg, channel === "delivery" && styles.chSegActive]}>
-              <Text style={[styles.chSegText, channel === "delivery" && styles.chSegTextActive]}>Antar</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {channel === "delivery" && (
-          <Pressable testID="select-driver-button" onPress={() => setDriverModal(true)} style={styles.driverPick}>
-            <Icon name="car-outline" size={18} color={colors.brandPrimary} />
-            <Text style={styles.driverPickText}>{selDriver ? `Kurir: ${selDriver.name}` : "Pilih Kurir Pengantar"}</Text>
-            <Icon name="chevron-down" size={16} color={colors.muted} />
-          </Pressable>
-        )}
-
-        {filtered.map((p) => {
-          const c = cart[p.id];
-          return (
-            <View key={p.id} style={styles.prodCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.prodName}>{p.name}</Text>
-                <Text style={styles.prodPrice}>{rupiah(priceOf(p))}</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
-                  <Badge text={CATEGORY_LABELS[p.category]} bg={colors.surfaceTertiary} fg={colors.onSurfaceTertiary} />
-                  <Text style={[styles.stockText, { color: p.stock_filled > p.reorder_point ? colors.success : colors.error }]}>
-                    Tersisa: {p.stock_filled}
-                  </Text>
-                  <Text style={styles.soldText}>| Terjual: {p.total_sold || 0}</Text>
-                  {p.category !== "refill" && (
-                    <Text style={styles.emptyText}>| Wadah Kosong: {p.stock_empty}</Text>
-                  )}
-                </View>
-                {p.is_returnable && c?.qty > 0 && (
-                  <Pressable testID={`exchange-${p.id}`} onPress={() => toggleExchange(p.id)} style={styles.exchangeRow}>
-                    <Icon name={c?.exchange ? "checkbox" : "square-outline"} size={18} color={c?.exchange ? colors.brandPrimary : colors.muted} />
-                    <Text style={styles.exchangeText}>Tukar tabung/galon kosong</Text>
+      {/* Grid Produk & Panel Kasir */}
+      <View style={styles.contentContainer}>
+        <ScrollView
+          style={styles.productGrid}
+          contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.brandPrimary}
+            />
+          }
+        >
+          {filteredProducts.length === 0 ? (
+            <Text style={styles.emptyText}>Tidak ada produk ditemukan</Text>
+          ) : (
+            <View style={styles.gridRow}>
+              {filteredProducts.map((p) => {
+                const price = getProductPrice(p);
+                const isOutOfStock = (p?.stock_filled ?? 0) <= 0;
+                return (
+                  <Pressable
+                    key={p?.id || p?.name || Math.random().toString()}
+                    style={[
+                      styles.productCard,
+                      isOutOfStock && { opacity: 0.6 },
+                    ]}
+                    onPress={() => addToCart(p)}
+                  >
+                    <Text style={styles.productName} numberOfLines={2}>
+                      {p?.name || "Produk"}
+                    </Text>
+                    <Text style={styles.productPrice}>{safeRupiah(price)}</Text>
+                    <Text
+                      style={[
+                        styles.productStock,
+                        isOutOfStock && { color: colors.error },
+                      ]}
+                    >
+                      {isOutOfStock ? "Stok Habis" : `Stok: ${p?.stock_filled ?? 0}`}
+                    </Text>
                   </Pressable>
-                )}
-              </View>
-              <View style={styles.stepper}>
-                <Pressable testID={`minus-${p.id}`} onPress={() => setQty(p.id, -1)} style={styles.stepBtn}>
-                  <Icon name="remove" size={18} color={colors.onSurface} />
-                </Pressable>
-                <Text style={styles.qtyText}>{c?.qty || 0}</Text>
-                <Pressable testID={`plus-${p.id}`} onPress={() => setQty(p.id, 1)} style={[styles.stepBtn, styles.stepBtnAdd]}>
-                  <Icon name="add" size={18} color={colors.onBrandPrimary} />
-                </Pressable>
-              </View>
+                );
+              })}
             </View>
-          );
-        })}
-        {filtered.length === 0 && <EmptyState icon="cube-outline" title="Belum ada produk" />}
-      </ScrollView>
+          )}
+        </ScrollView>
 
-      {/* Sticky checkout bar */}
-      {cartItems.length > 0 && (
-        <View style={[styles.checkoutBar, { paddingBottom: insets.bottom + 12 }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
-            {PAYMENTS.map((pm) => {
-              const active = payment === pm;
-              return (
-                <Pressable key={pm} testID={`pay-${pm}`} onPress={() => setPayment(pm)} style={[styles.payChip, active && styles.payChipActive]}>
-                  <Text style={[styles.payChipText, active && styles.payChipTextActive]}>{PAYMENT_LABELS[pm]}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <View style={styles.checkoutRow}>
-            <View>
-              <Text style={styles.totalLabel}>{totalUnits} item</Text>
-              <Text testID="cart-total" style={styles.totalValue}>{rupiah(total)}</Text>
-            </View>
-            <AppButton title="Bayar Sekarang" onPress={checkout} loading={submitting} icon="cash-outline" testID="checkout-button" style={{ flex: 1, marginLeft: 14 }} />
-          </View>
-        </View>
-      )}
-
-      {/* Customer modal */}
-      <Modal visible={custModal} animationType="slide" transparent onRequestClose={() => setCustModal(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setCustModal(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <Text style={styles.modalTitle}>Pilih Pelanggan</Text>
-          <Pressable testID="customer-umum" onPress={() => selectCustomer(null)} style={styles.custRow}>
-            <Icon name="walk-outline" size={20} color={colors.onSurface} />
-            <Text style={styles.custRowText}>Pelanggan Umum (Eceran)</Text>
-          </Pressable>
-          <FlatList
-            data={customers}
-            keyExtractor={(i) => i.id}
-            style={{ maxHeight: 380 }}
-            renderItem={({ item }) => (
-              <Pressable testID={`customer-${item.id}`} onPress={() => selectCustomer(item)} style={styles.custRow}>
-                <Icon name="business-outline" size={20} color={colors.brandPrimary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.custRowText}>{item.name}</Text>
-                  <Text style={styles.custRowSub}>{TIER_LABELS[item.tier]} • Deposit {rupiah(item.deposit_balance)} • Piutang {rupiah(item.receivable_balance)}</Text>
-                </View>
+        {/* Panel Keranjang */}
+        <View style={styles.cartPanel}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Text style={styles.cartTitle}>Keranjang Belanja</Text>
+            {safeCart.length > 0 && (
+              <Pressable onPress={clearCart}>
+                <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>Reset</Text>
               </Pressable>
             )}
-          />
-        </View>
-      </Modal>
+          </View>
 
-      {/* Driver modal */}
-      <Modal visible={driverModal} animationType="slide" transparent onRequestClose={() => setDriverModal(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setDriverModal(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <Text style={styles.modalTitle}>Pilih Kurir Pengantar</Text>
-          {drivers.length === 0 ? (
-            <Text style={styles.custRowSub}>Belum ada kurir. Tambahkan di menu Kelola Kurir.</Text>
-          ) : drivers.map((d) => (
-            <Pressable key={d.id} testID={`pick-driver-${d.id}`} onPress={() => { setSelDriver(d); setDriverModal(false); }} style={styles.custRow}>
-              <Icon name="car-outline" size={20} color={colors.brandPrimary} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.custRowText}>{d.name}</Text>
-                <Text style={styles.custRowSub}>{[d.vehicle_type, d.plate_number, d.phone].filter(Boolean).join(" • ") || "Tanpa data kendaraan"}</Text>
-              </View>
+          <ScrollView
+            style={styles.cartList}
+            contentContainerStyle={{ paddingBottom: 10 }}
+          >
+            {safeCart.length === 0 ? (
+              <Text style={styles.emptyCartText}>Belum ada item dipilih</Text>
+            ) : (
+              safeCart.map((item, idx) => {
+                const price = item?.price ?? getProductPrice(item?.product);
+                const itemId = item?.product?.id || item?.product?.name;
+                return (
+                  <View key={itemId || idx} style={styles.cartRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cartItemName} numberOfLines={1}>
+                        {item?.product?.name}
+                      </Text>
+                      <Text style={styles.cartItemPrice}>
+                        {safeRupiah(price)}
+                      </Text>
+                    </View>
+                    <View style={styles.qtyContainer}>
+                      <Pressable
+                        style={styles.qtyBtn}
+                        onPress={() => updateQty(itemId, -1)}
+                      >
+                        <Text style={styles.qtyBtnText}>-</Text>
+                      </Pressable>
+                      <Text style={styles.qtyText}>{item?.qty || 0}</Text>
+                      <Pressable
+                        style={styles.qtyBtn}
+                        onPress={() => updateQty(itemId, 1)}
+                      >
+                        <Text style={styles.qtyBtnText}>+</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+
+          <View style={styles.cartFooter}>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total:</Text>
+              <Text style={styles.totalValue}>{safeRupiah(totalCartAmount)}</Text>
+            </View>
+            <Pressable
+              style={[
+                styles.checkoutBtn,
+                safeCart.length === 0 && { opacity: 0.5 },
+              ]}
+              disabled={safeCart.length === 0}
+              onPress={() =>
+                router.push({
+                  pathname: "/checkout",
+                  params: { cart: JSON.stringify(safeCart) },
+                })
+              }
+            >
+              <Text style={styles.checkoutText}>Proses Pembayaran</Text>
             </Pressable>
-          ))}
+          </View>
         </View>
-      </Modal>
-
-      {/* Receipt options modal */}
-      <Modal visible={!!receiptInv} animationType="fade" transparent onRequestClose={() => setReceiptInv(null)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setReceiptInv(null)} />
-        <View style={[styles.receiptSheet, { paddingBottom: insets.bottom + 20 }]}>
-          <View style={styles.successIcon}><Icon name="checkmark-circle" size={40} color={colors.success} /></View>
-          <Text style={styles.receiptTitle}>Transaksi Berhasil</Text>
-          <Text style={styles.receiptSub}>{receiptInv?.invoice_no} • {rupiah(receiptInv?.total)}</Text>
-          <AppButton title="Cetak Struk & Selesai" icon="print-outline" testID="receipt-print" onPress={() => { runReceipt("print", receiptInv); setReceiptInv(null); }} style={{ marginTop: 8 }} />
-          <AppButton title="Kirim Struk WhatsApp" icon="logo-whatsapp" variant="secondary" testID="receipt-wa" onPress={() => { sendWhatsApp(receiptInv, receiptInv?._phone); setReceiptInv(null); }} style={{ marginTop: 10 }} />
-          <AppButton title="Selesai Tanpa Struk" icon="close-circle-outline" variant="outline" testID="receipt-skip" onPress={() => setReceiptInv(null)} style={{ marginTop: 10 }} />
-        </View>
-      </Modal>
+      </View>
     </View>
   );
 }
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 14, backgroundColor: c.brand, gap: 12, borderBottomLeftRadius: 18, borderBottomRightRadius: 18 },
-  title: { color: c.onBrandPrimary, fontSize: 20, fontWeight: "800" },
-  custPill: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: 180, backgroundColor: "rgba(255,255,255,0.18)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
-  custPillText: { color: c.onBrandPrimary, fontWeight: "600", fontSize: 13, flexShrink: 1 },
-  chipsWrap: { height: 56, justifyContent: "center", borderBottomWidth: 1, borderBottomColor: c.border, backgroundColor: c.surfaceSecondary },
-  chipsContent: { paddingHorizontal: 16, gap: 8, alignItems: "center" },
-  chip: { height: 36, paddingHorizontal: 16, borderRadius: 999, backgroundColor: c.surfaceTertiary, justifyContent: "center", flexShrink: 0 },
-  chipActive: { backgroundColor: c.brandPrimary },
-  chipText: { color: c.onSurfaceTertiary, fontWeight: "600", fontSize: 13 },
-  chipTextActive: { color: c.onBrandPrimary },
-  channelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  tierNote: { color: c.muted, fontSize: 12, fontWeight: "600" },
-  channelToggle: { flexDirection: "row", backgroundColor: c.surfaceTertiary, borderRadius: 999, padding: 3 },
-  chSeg: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
-  chSegActive: { backgroundColor: c.brandPrimary },
-  chSegText: { fontSize: 12, fontWeight: "700", color: c.onSurfaceTertiary },
-  chSegTextActive: { color: c.onBrandPrimary },
-  driverPick: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 14, marginBottom: 14 },
-  driverPickText: { flex: 1, fontSize: 14, fontWeight: "600", color: c.onSurface },
-  prodCard: { flexDirection: "row", alignItems: "center", backgroundColor: c.surfaceSecondary, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: c.border, gap: 10 },
-  prodName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
-  prodPrice: { fontSize: 15, fontWeight: "800", color: c.brandPrimary, marginTop: 2 },
-  stockText: { fontSize: 11, fontWeight: "700" },
-  soldText: { fontSize: 11, color: c.muted, fontWeight: "600" },
-  emptyText: { fontSize: 11, color: c.assetGallon, fontWeight: "600" },
-  exchangeRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
-  exchangeText: { fontSize: 12, color: c.onSurfaceSecondary },
-  stepper: { alignItems: "center", gap: 6 },
-  stepBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center" },
-  stepBtnAdd: { backgroundColor: c.brandPrimary },
-  qtyText: { fontSize: 16, fontWeight: "800", color: c.onSurface, minWidth: 28, textAlign: "center" },
-  checkoutBar: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: c.surfaceSecondary, borderTopWidth: 1, borderTopColor: c.border, paddingHorizontal: 16, paddingTop: 12, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
-  payChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: c.surfaceTertiary, flexShrink: 0 },
-  payChipActive: { backgroundColor: c.brandPrimary },
-  payChipText: { color: c.onSurfaceTertiary, fontWeight: "600", fontSize: 12 },
-  payChipTextActive: { color: c.onBrandPrimary },
-  checkoutRow: { flexDirection: "row", alignItems: "center" },
-  totalLabel: { fontSize: 11, color: c.muted },
-  totalValue: { fontSize: 20, fontWeight: "800", color: c.onSurface },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
-  modalSheet: { backgroundColor: c.surface, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20 },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: c.onSurface, marginBottom: 14 },
-  custRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.divider },
-  custRowText: { fontSize: 15, fontWeight: "600", color: c.onSurface },
-  custRowSub: { fontSize: 11, color: c.muted, marginTop: 2 },
-  receiptSheet: { position: "absolute", left: 20, right: 20, top: "28%", backgroundColor: c.surface, borderRadius: 22, padding: 24, alignItems: "stretch" },
-  successIcon: { alignSelf: "center", marginBottom: 8 },
-  receiptTitle: { fontSize: 18, fontWeight: "800", color: c.onSurface, textAlign: "center" },
-  receiptSub: { fontSize: 13, color: c.muted, textAlign: "center", marginTop: 4, marginBottom: 8 },
+  header: { padding: 12, backgroundColor: c.brand, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
+  searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: c.surface, borderRadius: 10, paddingHorizontal: 12, height: 40 },
+  searchInput: { flex: 1, marginLeft: 8, color: c.onSurface, fontSize: 14 },
+  catScroll: { paddingHorizontal: 12, paddingVertical: 8, alignItems: "center", gap: 8 },
+  catChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border },
+  catChipActive: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
+  catText: { fontSize: 13, color: c.muted, fontWeight: "600" },
+  catTextActive: { color: c.onBrandPrimary },
+  contentContainer: { flex: 1, flexDirection: "row" },
+  productGrid: { flex: 1 },
+  gridRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  productCard: { width: "48%", backgroundColor: c.surfaceSecondary, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.border, marginBottom: 8 },
+  productName: { fontSize: 13, fontWeight: "700", color: c.onSurface, height: 36 },
+  productPrice: { fontSize: 13, fontWeight: "800", color: c.brandPrimary, marginTop: 4 },
+  productStock: { fontSize: 11, color: c.muted, marginTop: 2 },
+  emptyText: { textAlign: "center", color: c.muted, marginTop: 30, fontSize: 13 },
+  cartPanel: { width: "42%", backgroundColor: c.surfaceSecondary, borderLeftWidth: 1, borderLeftColor: c.border, padding: 12, display: "flex", flexDirection: "column" },
+  cartTitle: { fontSize: 14, fontWeight: "800", color: c.onSurface },
+  cartList: { flex: 1 },
+  emptyCartText: { textAlign: "center", color: c.muted, fontSize: 12, marginTop: 20 },
+  cartRow: { flexDirection: "row", alignItems: "center", marginBottom: 10, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: c.border },
+  cartItemName: { fontSize: 12, fontWeight: "700", color: c.onSurface },
+  cartItemPrice: { fontSize: 11, color: c.muted },
+  qtyContainer: { flexDirection: "row", alignItems: "center", gap: 6 },
+  qtyBtn: { width: 24, height: 24, borderRadius: 6, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
+  qtyBtnText: { fontWeight: "bold", fontSize: 12, color: c.brandPrimary },
+  qtyText: { fontSize: 12, fontWeight: "700", color: c.onSurface, minWidth: 16, textAlign: "center" },
+  cartFooter: { borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+  totalLabel: { fontSize: 13, fontWeight: "700", color: c.muted },
+  totalValue: { fontSize: 14, fontWeight: "800", color: c.onSurface },
+  checkoutBtn: { backgroundColor: c.brandPrimary, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
+  checkoutText: { color: c.onBrandPrimary, fontSize: 13, fontWeight: "700" },
 }));

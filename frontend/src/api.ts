@@ -1,6 +1,12 @@
 import { storage } from "@/src/utils/storage";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
+// Tambahkan Fallback URL agar tidak pernah bernilai 'undefined'
+const FALLBACK_URL = "https://depotpro-backend.onrender.com";
+const rawBase = process.env.EXPO_PUBLIC_BACKEND_URL || process.env.EXPO_PUBLIC_API_URL || FALLBACK_URL;
+
+// Bersihkan trailing slash jika ada
+const BASE = rawBase.replace(/\/+$/, "");
+
 export const TOKEN_KEY = "gg_access_token";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -29,11 +35,13 @@ export const api = {
     return handle(res);
   },
   async get(path: string) {
-    const res = await fetch(`${BASE}/api${path}`, { headers: await authHeaders() });
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const res = await fetch(`${BASE}/api${cleanPath}`, { headers: await authHeaders() });
     return handle(res);
   },
   async post(path: string, data?: any) {
-    const res = await fetch(`${BASE}/api${path}`, {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const res = await fetch(`${BASE}/api${cleanPath}`, {
       method: "POST",
       headers: await authHeaders(),
       body: JSON.stringify(data ?? {}),
@@ -41,7 +49,8 @@ export const api = {
     return handle(res);
   },
   async put(path: string, data?: any) {
-    const res = await fetch(`${BASE}/api${path}`, {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const res = await fetch(`${BASE}/api${cleanPath}`, {
       method: "PUT",
       headers: await authHeaders(),
       body: JSON.stringify(data ?? {}),
@@ -49,7 +58,8 @@ export const api = {
     return handle(res);
   },
   async del(path: string) {
-    const res = await fetch(`${BASE}/api${path}`, {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const res = await fetch(`${BASE}/api${cleanPath}`, {
       method: "DELETE",
       headers: await authHeaders(),
     });

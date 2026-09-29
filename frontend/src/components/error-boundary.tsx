@@ -1,147 +1,90 @@
-// App level error boundary, mounted once in app/_layout.tsx. A render crash
-// shows a reload screen instead of a blank app; the error is also logged so
-// it shows up in the Metro output. Do not mount additional boundaries.
+import React, { Component, ReactNode } from "react";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 
-import { reloadAppAsync } from "expo";
-import { Component, type ErrorInfo, type PropsWithChildren, useState } from "react";
-import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+interface Props {
+  children: ReactNode;
+  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+  fallback?: ReactNode;
+}
 
-import { makeStyles } from "@/src/theme";
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
 
-type ErrorBoundaryState = { error: Error | null };
-
-export class ErrorBoundary extends Component<PropsWithChildren, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("[ErrorBoundary] render crash:", error, info.componentStack ?? "");
-  }
-
-  resetError = (): void => {
-    this.setState({ error: null });
+export class ErrorBoundary extends Component<Props, State> {
+  public state: State = {
+    hasError: false,
+    error: null,
   };
 
-  render() {
-    if (this.state.error) {
-      return <ErrorFallback error={this.state.error} resetError={this.resetError} />;
+  public static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // Baris 27 Aman: Menggunakan optional chaining (?.)
+    // Agar tidak crash jika props onError tidak dikirim dari parent
+    this.props?.onError?.(error, errorInfo);
+    console.error("[ErrorBoundary Caught]:", error, errorInfo);
+  }
+
+  private handleReset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  public render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      return (
+        <View style={styles.container}>
+          <Text style={styles.title}>Terjadi Kesalahan Aplikasi</Text>
+          <Text style={styles.subtitle}>
+            {this.state.error?.message || "Terjadi kesalahan yang tidak terduga."}
+          </Text>
+          <Pressable style={styles.button} onPress={this.handleReset}>
+            <Text style={styles.buttonText}>Coba Lagi</Text>
+          </Pressable>
+        </View>
+      );
     }
+
     return this.props.children;
   }
 }
 
-function ErrorFallback({ error, resetError }: { error: Error; resetError: () => void }) {
-  const styles = useStyles();
-  const [showDetails, setShowDetails] = useState(false);
-
-  const handleReload = async () => {
-    try {
-      await reloadAppAsync();
-    } catch {
-      // Reload is unavailable in some environments; retry the render instead.
-      resetError();
-    }
-  };
-
-  return (
-    <View style={styles.container} testID="error-fallback">
-      <View style={styles.content}>
-        <Text style={styles.title}>Something went wrong</Text>
-        <Text style={styles.message}>Please reload the app to continue.</Text>
-        {__DEV__ ? <Text style={styles.devMessage}>{error.message}</Text> : null}
-        <Pressable
-          onPress={handleReload}
-          testID="error-fallback-reload"
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-        >
-          <Text style={styles.buttonText}>Reload app</Text>
-        </Pressable>
-        {__DEV__ ? (
-          <Pressable onPress={() => setShowDetails((v) => !v)} accessibilityRole="button" hitSlop={8}>
-            <Text style={styles.detailsToggle}>{showDetails ? "Hide details" : "Show details"}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      {__DEV__ && showDetails ? (
-        <ScrollView style={styles.details} contentContainerStyle={styles.detailsContent}>
-          <Text selectable style={styles.detailsText}>
-            {error.stack ?? error.message}
-          </Text>
-        </ScrollView>
-      ) : null}
-    </View>
-  );
-}
-
-const useStyles = makeStyles((colors) => ({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.surface,
+    alignItems: "center",
     justifyContent: "center",
     padding: 24,
-  },
-  content: {
-    alignItems: "center",
-    gap: 12,
+    backgroundColor: "#F9FAFB",
   },
   title: {
-    color: colors.onSurface,
-    fontSize: 22,
-    fontWeight: "700",
-    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 8,
   },
-  message: {
-    color: colors.muted,
-    fontSize: 15,
+  subtitle: {
+    fontSize: 14,
+    color: "#6B7280",
     textAlign: "center",
-  },
-  devMessage: {
-    color: colors.error,
-    fontSize: 13,
-    textAlign: "center",
+    marginBottom: 20,
   },
   button: {
-    marginTop: 8,
-    backgroundColor: colors.brandPrimary,
-    borderRadius: 12,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    minWidth: 180,
-  },
-  buttonPressed: {
-    opacity: 0.85,
+    backgroundColor: "#2563EB",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
   buttonText: {
-    color: colors.onBrandPrimary,
-    fontSize: 15,
-    fontWeight: "600",
-    textAlign: "center",
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
   },
-  detailsToggle: {
-    color: colors.muted,
-    fontSize: 13,
-    textDecorationLine: "underline",
-    paddingVertical: 8,
-  },
-  details: {
-    marginTop: 16,
-    maxHeight: 260,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceSecondary,
-  },
-  detailsContent: {
-    padding: 12,
-  },
-  detailsText: {
-    color: colors.onSurfaceSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
-  },
-}));
+});

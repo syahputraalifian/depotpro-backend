@@ -1,22 +1,62 @@
-import { useCallback, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { View, Text, ScrollView, Pressable, Modal, RefreshControl } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
-import { api } from "@/src/api";
-import { ROLE_LABELS, rupiah } from "@/src/format";
-import { AppButton, Badge, Field, EmptyState, useToast } from "@/src/ui";
+import * as apiModule from "@/src/api";
+import * as formatModule from "@/src/format";
+import * as uiModule from "@/src/ui";
+
+const { AppButton, Badge, Field, EmptyState } = uiModule;
 
 const ROLES = ["driver", "cashier", "warehouse_admin", "owner"];
 const EMPTY = { email: "", password: "", name: "", role: "driver", phone: "", vehicle_type: "", plate_number: "", base_salary: "", incentive_rate: "" };
+
+// Helper aman untuk format Rupiah
+const safeRupiah = (val: any) => {
+  const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
+  if (typeof formatFunc === "function") {
+    try {
+      return formatFunc(val);
+    } catch {
+      return `Rp ${val || 0}`;
+    }
+  }
+  return `Rp ${(val || 0).toLocaleString("id-ID")}`;
+};
+
+// Helper aman untuk ROLE_LABELS
+const getRoleLabel = (role: string) => {
+  const labels = (formatModule as any)?.ROLE_LABELS || {};
+  return labels[role] || role;
+};
 
 export default function ManageUsers() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const toast = useToast();
+
+  // Safe toast wrapper
+  const showToast = useCallback((msg: string, type?: string) => {
+    try {
+      const useToastHook = (uiModule as any)?.useToast;
+      if (typeof useToastHook === "function") {
+        const toast = useToastHook();
+        if (typeof toast === "function") {
+          toast(msg, type);
+          return;
+        } else if (toast && typeof toast.show === "function") {
+          toast.show(msg, type);
+          return;
+        }
+      }
+    } catch (e) {
+      // Fallback
+    }
+    console.log(`[Toast ${type || "info"}]:`, msg);
+  }, []);
 
   const [users, setUsers] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -25,78 +65,172 @@ export default function ManageUsers() {
   const [form, setForm] = useState<any>(EMPTY);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    try { setUsers(await api.get("/users")); } catch (e: any) { toast(e.message, "error"); }
-  }, []);
-  useFocusEffect(useCallback(() => { load(); }, [load]));
-  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
-  const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
-  const active = users.filter((u) => !u.disabled);
+  // Safe API Client
+  const getApi = (apiModule as any)?.api || (apiModule as any)?.default;
 
-  const openAdd = () => { setEditId(null); setForm(EMPTY); setModal(true); };
+  const load = useCallback(async () => {
+    try {
+      if (getApi && typeof getApi.get === "function") {
+        const res = await getApi.get("/users");
+        setUsers(Array.isArray(res) ? res : []);
+      }
+    } catch (e: any) {
+      showToast(e?.message || "Gagal memuat data", "error");
+    }
+  }, [getApi, showToast]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
+  
+  const safeUsers = Array.isArray(users) ? users : [];
+  const active = safeUsers.filter((u) => u && !u.disabled);
+
+  const openAdd = () => {
+    setEditId(null);
+    setForm(EMPTY);
+    setModal(true);
+  };
+
   const openEdit = (u: any) => {
-    setEditId(u.id);
-    setForm({ email: u.email, password: "", name: u.name, role: u.role, phone: u.phone || "", vehicle_type: u.vehicle_type || "", plate_number: u.plate_number || "", base_salary: String(u.base_salary || ""), incentive_rate: String(u.incentive_rate || "") });
+    if (!u) return;
+    setEditId(u.id || null);
+    setForm({
+      email: u.email || "",
+      password: "",
+      name: u.name || "",
+      role: u.role || "driver",
+      phone: u.phone || "",
+      vehicle_type: u.vehicle_type || "",
+      plate_number: u.plate_number || "",
+      base_salary: String(u.base_salary || ""),
+      incentive_rate: String(u.incentive_rate || ""),
+    });
     setModal(true);
   };
 
   const save = async () => {
-    if (!form.name) { toast("Nama wajib diisi", "error"); return; }
-    if (!editId && (!form.email || form.password.length < 5)) { toast("Email & password (min 5) wajib", "error"); return; }
+    if (!form?.name) {
+      showToast("Nama wajib diisi", "error");
+      return;
+    }
+    if (!editId && (!form?.email || (form?.password || "").length < 5)) {
+      showToast("Email & password (min 5) wajib", "error");
+      return;
+    }
     setSaving(true);
     try {
       const body: any = {
-        name: form.name, role: form.role, phone: form.phone, vehicle_type: form.vehicle_type,
-        plate_number: form.plate_number, base_salary: Number(form.base_salary || 0), incentive_rate: Number(form.incentive_rate || 0),
+        name: form.name,
+        role: form.role,
+        phone: form.phone,
+        vehicle_type: form.vehicle_type,
+        plate_number: form.plate_number,
+        base_salary: Number(form.base_salary || 0),
+        incentive_rate: Number(form.incentive_rate || 0),
       };
+
       if (editId) {
         if (form.password) body.password = form.password;
-        await api.put(`/users/${editId}`, body);
+        if (getApi && typeof getApi.put === "function") {
+          await getApi.put(`/users/${editId}`, body);
+        }
       } else {
-        await api.post("/users", { ...body, email: form.email, password: form.password });
+        if (getApi && typeof getApi.post === "function") {
+          await getApi.post("/users", { ...body, email: form.email, password: form.password });
+        }
       }
-      toast(editId ? "Data diperbarui" : "Karyawan ditambahkan", "success");
-      setModal(false); setForm(EMPTY); setEditId(null); load();
-    } catch (e: any) { toast(e.message, "error"); } finally { setSaving(false); }
+      showToast(editId ? "Data diperbarui" : "Karyawan ditambahkan", "success");
+      setModal(false);
+      setForm(EMPTY);
+      setEditId(null);
+      load();
+    } catch (e: any) {
+      showToast(e?.message || "Gagal menyimpan data", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const remove = async (u: any) => {
+    if (!u?.id) return;
     try {
-      await api.del(`/users/${u.id}`);
-      toast("Karyawan dinonaktifkan", "success");
+      if (getApi && typeof getApi.del === "function") {
+        await getApi.del(`/users/${u.id}`);
+      } else if (getApi && typeof getApi.delete === "function") {
+        await getApi.delete(`/users/${u.id}`);
+      }
+      showToast("Karyawan dinonaktifkan", "success");
       load();
-    } catch (e: any) { toast(e.message, "error"); }
+    } catch (e: any) {
+      showToast(e?.message || "Gagal menonaktifkan karyawan", "error");
+    }
   };
 
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}><Icon name="arrow-back" size={22} color={colors.onBrandPrimary} /></Pressable>
+        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}>
+          <Icon name="arrow-back" size={22} color={colors.onBrandPrimary} />
+        </Pressable>
         <Text style={styles.title}>Kelola Kurir & Karyawan</Text>
-        <Pressable testID="add-user-button" onPress={openAdd} style={styles.iconBtn}><Icon name="add" size={22} color={colors.onBrandPrimary} /></Pressable>
+        <Pressable testID="add-user-button" onPress={openAdd} style={styles.iconBtn}>
+          <Icon name="add" size={22} color={colors.onBrandPrimary} />
+        </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}>
+      <ScrollView
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}
+      >
         {active.map((u) => (
-          <View key={u.id} style={styles.card}>
+          <View key={u?.id || Math.random().toString()} style={styles.card}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-              <View style={styles.avatar}><Icon name={u.role === "driver" ? "car" : u.role === "cashier" ? "cart" : u.role === "warehouse_admin" ? "cube" : "star"} size={20} color={colors.brandPrimary} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{u.name}</Text>
-                <Text style={styles.sub}>{u.email}</Text>
+              <View style={styles.avatar}>
+                <Icon
+                  name={u?.role === "driver" ? "car" : u?.role === "cashier" ? "cart" : u?.role === "warehouse_admin" ? "cube" : "star"}
+                  size={20}
+                  color={colors.brandPrimary}
+                />
               </View>
-              <Badge text={ROLE_LABELS[u.role]} bg={colors.brandTertiary} fg={colors.onBrandTertiary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.name}>{u?.name || "Tanpa Nama"}</Text>
+                <Text style={styles.sub}>{u?.email || "-"}</Text>
+              </View>
+              <Badge text={getRoleLabel(u?.role)} bg={colors.brandTertiary} fg={colors.onBrandTertiary} />
             </View>
-            {u.role === "driver" && (u.vehicle_type || u.plate_number || u.phone) && (
-              <Text style={styles.vehicle}>{[u.vehicle_type, u.plate_number, u.phone].filter(Boolean).join(" • ")}</Text>
+            {u?.role === "driver" && (u?.vehicle_type || u?.plate_number || u?.phone) && (
+              <Text style={styles.vehicle}>{[u?.vehicle_type, u?.plate_number, u?.phone].filter(Boolean).join(" • ")}</Text>
             )}
-            {(u.base_salary > 0 || u.incentive_rate > 0) && (
-              <Text style={styles.salary}>Gaji pokok {rupiah(u.base_salary)}{u.incentive_rate > 0 ? ` • Insentif ${rupiah(u.incentive_rate)}/unit` : ""}</Text>
+            {((u?.base_salary || 0) > 0 || (u?.incentive_rate || 0) > 0) && (
+              <Text style={styles.salary}>
+                Gaji pokok {safeRupiah(u?.base_salary)}
+                {(u?.incentive_rate || 0) > 0 ? ` • Insentif ${safeRupiah(u?.incentive_rate)}/unit` : ""}
+              </Text>
             )}
             <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-              <Pressable testID={`edit-user-${u.id}`} onPress={() => openEdit(u)} style={styles.actionBtn}><Icon name="create-outline" size={16} color={colors.brandPrimary} /><Text style={styles.actionText}>Edit</Text></Pressable>
-              <Pressable testID={`delete-user-${u.id}`} onPress={() => remove(u)} style={[styles.actionBtn, { backgroundColor: colors.receivableBadge }]}><Icon name="trash-outline" size={16} color={colors.error} /><Text style={[styles.actionText, { color: colors.error }]}>Nonaktifkan</Text></Pressable>
+              <Pressable testID={`edit-user-${u?.id}`} onPress={() => openEdit(u)} style={styles.actionBtn}>
+                <Icon name="create-outline" size={16} color={colors.brandPrimary} />
+                <Text style={styles.actionText}>Edit</Text>
+              </Pressable>
+              <Pressable
+                testID={`delete-user-${u?.id}`}
+                onPress={() => remove(u)}
+                style={[styles.actionBtn, { backgroundColor: colors.receivableBadge }]}
+              >
+                <Icon name="trash-outline" size={16} color={colors.error} />
+                <Text style={[styles.actionText, { color: colors.error }]}>Nonaktifkan</Text>
+              </Pressable>
             </View>
           </View>
         ))}
@@ -109,26 +243,72 @@ export default function ManageUsers() {
           <Text style={styles.sheetTitle}>{editId ? "Edit Karyawan" : "Tambah Kurir / Karyawan"}</Text>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Field label="Nama" value={form.name} onChangeText={(v: string) => set("name", v)} placeholder="Budi Kurir" testID="uf-name" />
-            {!editId && <Field label="Email" value={form.email} onChangeText={(v: string) => set("email", v)} keyboardType="email-address" autoCapitalize="none" placeholder="kurir@gasgalon.id" testID="uf-email" />}
-            <Field label={editId ? "Password Baru (kosongkan jika tetap)" : "Password"} value={form.password} onChangeText={(v: string) => set("password", v)} secureTextEntry placeholder="min 5 karakter" testID="uf-password" />
+            {!editId && (
+              <Field
+                label="Email"
+                value={form.email}
+                onChangeText={(v: string) => set("email", v)}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                placeholder="kurir@gasgalon.id"
+                testID="uf-email"
+              />
+            )}
+            <Field
+              label={editId ? "Password Baru (kosongkan jika tetap)" : "Password"}
+              value={form.password}
+              onChangeText={(v: string) => set("password", v)}
+              secureTextEntry
+              placeholder="min 5 karakter"
+              testID="uf-password"
+            />
             <Text style={styles.fieldLabel}>Peran</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
               {ROLES.map((r) => (
-                <Pressable key={r} testID={`uf-role-${r}`} onPress={() => set("role", r)} style={[styles.roleBtn, form.role === r && styles.roleBtnActive]}>
-                  <Text style={[styles.roleText, form.role === r && styles.roleTextActive]}>{ROLE_LABELS[r]}</Text>
+                <Pressable
+                  key={r}
+                  testID={`uf-role-${r}`}
+                  onPress={() => set("role", r)}
+                  style={[styles.roleBtn, form.role === r && styles.roleBtnActive]}
+                >
+                  <Text style={[styles.roleText, form.role === r && styles.roleTextActive]}>{getRoleLabel(r)}</Text>
                 </Pressable>
               ))}
             </View>
             <Field label="No. HP" value={form.phone} onChangeText={(v: string) => set("phone", v)} keyboardType="phone-pad" placeholder="08123456789" />
             {form.role === "driver" && (
               <>
-                <Field label="Jenis Kendaraan" value={form.vehicle_type} onChangeText={(v: string) => set("vehicle_type", v)} placeholder="Motor / Pickup / Truk" testID="uf-vehicle" />
-                <Field label="Plat Nomor" value={form.plate_number} onChangeText={(v: string) => set("plate_number", v)} placeholder="B 1234 XYZ" testID="uf-plate" />
+                <Field
+                  label="Jenis Kendaraan"
+                  value={form.vehicle_type}
+                  onChangeText={(v: string) => set("vehicle_type", v)}
+                  placeholder="Motor / Pickup / Truk"
+                  testID="uf-vehicle"
+                />
+                <Field
+                  label="Plat Nomor"
+                  value={form.plate_number}
+                  onChangeText={(v: string) => set("plate_number", v)}
+                  placeholder="B 1234 XYZ"
+                  testID="uf-plate"
+                />
               </>
             )}
             <Field label="Gaji Pokok" value={form.base_salary} onChangeText={(v: string) => set("base_salary", v)} keyboardType="numeric" placeholder="1500000" />
-            <Field label="Tarif Insentif per Unit Antar" value={form.incentive_rate} onChangeText={(v: string) => set("incentive_rate", v)} keyboardType="numeric" placeholder="2000" />
-            <AppButton title={editId ? "Simpan Perubahan" : "Tambah Karyawan"} onPress={save} loading={saving} icon="save-outline" testID="save-user-button" />
+            <Field
+              label="Tarif Insentif per Unit Antar"
+              value={form.incentive_rate}
+              onChangeText={(v: string) => set("incentive_rate", v)}
+              keyboardType="numeric"
+              placeholder="2000"
+            />
+            <AppButton
+              title={editId ? "Simpan Perubahan" : "Tambah Karyawan"}
+              onPress={save}
+              loading={saving}
+              icon="save-outline"
+              testID="save-user-button"
+            />
             <View style={{ height: 20 }} />
           </ScrollView>
         </View>
