@@ -1,10 +1,12 @@
 import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
+import uuid
 
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
+from pydantic import BaseModel
 
 # ==========================================
 # KONFIGURASI
@@ -14,6 +16,31 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
 app = FastAPI(title="GasGalon ERP Backend")
+
+# Inisialisasi memory state produk agar tidak kosong/hilang saat app berjalan
+@app.on_event("startup")
+async def startup_event():
+    if not hasattr(app.state, "products"):
+        app.state.products = [
+            {
+                "id": "prod-default-1",
+                "name": "Gas LPG 3 Kg",
+                "category": "lpg",
+                "is_returnable": True,
+                "cost_price": 16000,
+                "freight_cost": 1000,
+                "depreciation_cost": 500,
+                "price_eceran": 20000,
+                "price_warung": 18500,
+                "price_pangkalan": 17500,
+                "price_korporat": 17000,
+                "deposit_amount": 100000,
+                "stock_filled": 50,
+                "stock_empty": 20,
+                "reorder_point": 10,
+                "total_sold": 0
+            }
+        ]
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +55,7 @@ DEMO_USERS = {
     "kasir@gasgalon.id": ("kasir12345", "kasir", "Kasir Depot"),
     "gudang@gasgalon.id": ("gudang12345", "gudang", "Staf Gudang"),
     "driver@gasgalon.id": ("driver12345", "driver", "Driver Kurir"),
+    "owner@depot.com": ("password_owner", "owner", "Owner Depot"),
 }
 
 def create_access_token(data: dict):
@@ -48,7 +76,6 @@ async def root():
 @app.post("/auth/login")
 @app.post("/login")
 async def login(payload: Dict[str, Any] = Body(...)):
-    print(f"📥 PAYLOAD LOGIN: {payload}")
     identifier = str(payload.get("email") or payload.get("username") or payload.get("identifier") or "").strip().lower()
     password = str(payload.get("password") or payload.get("pass") or "").strip()
 
@@ -86,12 +113,6 @@ DASHBOARD_DATA = {
 
 @app.get("/dashboard")
 @app.get("/api/dashboard")
-@app.get("/dashboard/summary")
-@app.get("/api/dashboard/summary")
-@app.get("/dashboard/stats")
-@app.get("/api/dashboard/stats")
-@app.post("/dashboard")
-@app.post("/api/dashboard")
 async def get_dashboard():
     return DASHBOARD_DATA
 
@@ -104,13 +125,6 @@ async def get_dashboard():
 async def get_me():
     return {"email": "owner@gasgalon.id", "name": "Pemilik Depot", "role": "owner"}
 
-@app.get("/stock")
-@app.get("/api/stock")
-@app.get("/products")
-@app.get("/api/products")
-async def get_stock():
-    return []
-
 @app.get("/transactions")
 @app.get("/api/transactions")
 @app.get("/sales")
@@ -120,17 +134,12 @@ async def get_transactions():
 
 @app.get("/reports")
 @app.get("/api/reports")
-@app.get("/reports/financial")
-@app.get("/api/reports/financial")
 async def get_reports():
     return {"daily": 0, "monthly": 0, "yearly": 0, "data": []}
-# ====================================================================
-# API PRODUCT HANDLERS (Mencegah Request Jatuh ke Catch-All Interceptor)
-# ====================================================================
 
-from pydantic import BaseModel
-from typing import Optional
-import uuid
+# ====================================================================
+# API PRODUCT HANDLERS (Harus Berada di Atas Catch-All)
+# ====================================================================
 
 class ProductModel(BaseModel):
     name: str
@@ -151,42 +160,29 @@ class ProductModel(BaseModel):
 @app.post("/products")
 @app.post("/api/products")
 async def create_product_real(product: ProductModel):
+    if not hasattr(app.state, "products"):
+        app.state.products = []
+        
     new_product = product.dict()
     new_product["id"] = str(uuid.uuid4())
     new_product["total_sold"] = 0
     
-    # Jika server menggunakan state memory internal
-    if hasattr(app, "state") and hasattr(app.state, "products"):
-        if isinstance(app.state.products, list):
-            app.state.products.append(new_product)
-            
+    app.state.products.append(new_product)
     print(f"[SUCCESS] Produk berhasil ditambahkan: {new_product['name']}")
     return new_product
 
 @app.get("/products")
 @app.get("/api/products")
 async def get_products_real():
-    if hasattr(app, "state") and hasattr(app.state, "products"):
-        return app.state.products
-    return []
+    if not hasattr(app.state, "products"):
+        app.state.products = []
+    return app.state.products
 
 
 # ====================================================================
-# CATCH-ALL WILDCARD INTERCEPTOR (Harus Berada di Paling Bawah File)
+# CATCH-ALL WILDCARD (Hanya untuk route lain yang benar-benar tidak ada)
 # ====================================================================
 
-@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def catch_all(request: Request, full_path: str):
-    print(f"REQUEST DIPEGANG CATCH-ALL: {request.method} /{full_path}")
-    return {
-        "status": "success",
-        "message": f"Intercepted: {full_path}",
-        "data": [],
-        "result": []
-    }
-# ==========================================
-# CATCH-ALL WILDCARD (Satu-satunya Penuntas 404)
-# ==========================================
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
     print(f"🚨 REQUEST DIPEGANG CATCH-ALL: {request.method} /{full_path}")
