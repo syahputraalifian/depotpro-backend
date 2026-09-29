@@ -911,16 +911,20 @@ async def delete_cash_entry(eid: str, user: dict = Depends(require_roles(Role.ow
 
 @api.post("/finance/reset-history")
 async def reset_finance_history(user: dict = Depends(require_roles(Role.owner))):
+    # Hapus/reset status kas & transaksi
     res = await db.cash_entries.update_many(
         {"deleted": {"$ne": True}}, {"$set": {"deleted": True, "deleted_at": now_utc()}})
-    await db.transactions.delete_many({})
-    await db.sales.delete_many({})
-    await db.orders.delete_many({})
-    await db.deliveries.delete_many({})
-    await db.sales_records.delete_many({})
-    return {"ok": True, "cleared": res.modified_count}
-
-
+    
+    # List seluruh koleksi penjualan, transaksi, laporan & kasir yang mungkin dipakai
+    collections_to_clear = [
+        "transactions", "sales", "orders", "deliveries", "sales_records",
+        "sales_items", "pos_orders", "reports", "daily_reports", "cashier_logs"
+    ]
+    
+    for col in collections_to_clear:
+        await db[col].delete_many({})
+        
+    return {"ok": True, "cleared_cash_entries": res.modified_count, "status": "all_sales_cleared"}
 @api.get("/finance/receivables", response_model=List[Transaction])
 async def receivables(user: dict = Depends(require_roles(Role.owner, Role.cashier))):
     items = await db.transactions.find({"status": "outstanding"}).sort("due_date", 1).to_list(500)
