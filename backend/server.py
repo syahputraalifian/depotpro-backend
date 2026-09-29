@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
 
@@ -40,11 +40,15 @@ def create_access_token(data: dict):
 # AUTH ENDPOINTS
 # ==========================================
 @app.get("/")
+@app.get("/api")
 async def root():
     return {"status": "ok", "message": "GasGalon ERP Backend Active"}
 
 @app.post("/api/auth/login")
+@app.post("/auth/login")
+@app.post("/login")
 async def login(payload: Dict[str, Any] = Body(...)):
+    print(f"📥 PAYLOAD LOGIN: {payload}")
     identifier = str(payload.get("email") or payload.get("username") or payload.get("identifier") or "").strip().lower()
     password = str(payload.get("password") or payload.get("pass") or "").strip()
 
@@ -65,39 +69,71 @@ async def login(payload: Dict[str, Any] = Body(...)):
     raise HTTPException(status_code=401, detail="Email atau password salah")
 
 # ==========================================
-# DASHBOARD & DATA ENDPOINTS (MENCEGAH 404)
+# ROUTE UTAMA DASHBOARD & PROFIL
 # ==========================================
-@app.get("/api/dashboard")
-@app.get("/api/dashboard/summary")
-@app.get("/api/dashboard/stats")
-async def get_dashboard_summary():
-    return {
-        "status": "success",
-        "revenue": 0,
-        "transactions_count": 0,
-        "low_stock_count": 0,
-        "recent_transactions": [],
-        "low_stock_items": []
-    }
+DASHBOARD_DATA = {
+    "status": "success",
+    "revenue": 0,
+    "transactions_count": 0,
+    "low_stock_count": 0,
+    "recent_transactions": [],
+    "low_stock_items": [],
+    "daily_revenue": 0,
+    "monthly_revenue": 0,
+    "total_sales": 0,
+    "data": []
+}
 
+@app.get("/dashboard")
+@app.get("/api/dashboard")
+@app.get("/dashboard/summary")
+@app.get("/api/dashboard/summary")
+@app.get("/dashboard/stats")
+@app.get("/api/dashboard/stats")
+@app.post("/dashboard")
+@app.post("/api/dashboard")
+async def get_dashboard():
+    return DASHBOARD_DATA
+
+@app.get("/users/me")
+@app.get("/api/users/me")
+@app.get("/auth/me")
+@app.get("/api/auth/me")
+@app.get("/profile")
+@app.get("/api/profile")
+async def get_me():
+    return {"email": "owner@gasgalon.id", "name": "Pemilik Depot", "role": "owner"}
+
+@app.get("/stock")
 @app.get("/api/stock")
+@app.get("/products")
 @app.get("/api/products")
 async def get_stock():
     return []
 
+@app.get("/transactions")
 @app.get("/api/transactions")
+@app.get("/sales")
+@app.get("/api/sales")
 async def get_transactions():
     return []
 
-@app.get("/api/users/me")
-async def get_current_user():
-    return {
-        "email": "owner@gasgalon.id",
-        "name": "Pemilik Depot",
-        "role": "owner"
-    }
-
+@app.get("/reports")
 @app.get("/api/reports")
+@app.get("/reports/financial")
 @app.get("/api/reports/financial")
 async def get_reports():
-    return {"daily": 0, "monthly": 0, "yearly": 0}
+    return {"daily": 0, "monthly": 0, "yearly": 0, "data": []}
+
+# ==========================================
+# CATCH-ALL WILDCARD (Satu-satunya Penuntas 404)
+# ==========================================
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def catch_all(request: Request, full_path: str):
+    print(f"🚨 REQUEST DIPEGANG CATCH-ALL: {request.method} /{full_path}")
+    return {
+        "status": "success",
+        "message": f"Intercepted: {full_path}",
+        "data": [],
+        "result": []
+    }
