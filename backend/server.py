@@ -1154,3 +1154,28 @@ async def root():
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
+
+@api.patch("/products/{product_id}/stock")
+async def update_product_stock(
+    product_id: str, 
+    adjustment: int,
+    user: dict = Depends(require_roles(Role.owner, Role.cashier))
+):
+    product = await db.products.find_one({"_id": product_id})
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    
+    new_stock = max(0, product.get("stock", 0) + adjustment)
+    is_available = new_stock > 0
+
+    await db.products.update_one(
+        {"_id": product_id}, 
+        {"$set": {"stock": new_stock, "is_available": is_available}}
+    )
+    
+    return {
+        "ok": True, 
+        "product_id": product_id, 
+        "new_stock": new_stock,
+        "is_available": is_available
+    }
