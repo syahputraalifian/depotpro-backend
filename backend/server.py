@@ -116,6 +116,7 @@ class Product(BaseModel):
     stock_empty: int = 0         # kosong di gudang
     reorder_point: int = 10
     total_sold: int = 0          # akumulasi unit terjual
+    is_active: bool = True        # soft-delete flag
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -438,6 +439,7 @@ async def delete_user(uid: str, user: dict = Depends(require_roles(Role.owner)))
 @api.get("/products", response_model=List[Product])
 async def list_products(category: Optional[str] = None, user: dict = Depends(current_user)):
     q = {"category": category} if category else {}
+    q["is_active"] = {"$ne": False}
     items = await db.products.find(q).sort("name", 1).to_list(1000)
     return [Product(**i) for i in items]
 
@@ -460,6 +462,20 @@ async def update_product(pid: str, data: ProductCreate, user: dict = Depends(req
     await db.products.update_one({"id": pid}, {"$set": upd})
     merged = {**existing, **upd}
     return Product(**merged)
+
+
+@api.delete("/products/{pid}")
+async def delete_product(pid: str, user: dict = Depends(require_roles(Role.owner, Role.warehouse_admin))):
+    existing = await db.products.find_one({"id": pid})
+    if not existing:
+        raise HTTPException(404, "Produk tidak ditemukan")
+    # if referenced by any transaction (relation constraint) -> soft delete
+    used = await db.transactions.find_one({"items.product_id": pid})
+    if used:
+        await db.products.update_one({"id": pid}, {"$set": {"is_active": False}})
+        return {"ok": True, "mode": "soft", "message": "Produk dinonaktifkan (punya riwayat transaksi)"}
+    await db.products.delete_one({"id": pid})
+    return {"ok": True, "mode": "hard", "message": "Produk dihapus permanen"}
 
 
 @api.post("/products/{pid}/adjust", response_model=Product)
@@ -503,7 +519,7 @@ async def supplier_purchase(data: SupplierPurchase, user: dict = Depends(require
 
 @api.get("/inventory/low-stock", response_model=List[Product])
 async def low_stock(user: dict = Depends(current_user)):
-    items = await db.products.find().to_list(1000)
+    items = await db.products.find({"is_active": {"$ne": False}}).to_list(1000)
     low = [Product(**i) for i in items if i.get("stock_filled", 0) <= i.get("reorder_point", 0)]
     return low
 
@@ -832,7 +848,7 @@ async def add_cash_entry(data: CashEntryCreate, user: dict = Depends(require_rol
 
 @api.get("/finance/summary")
 async def finance_summary(user: dict = Depends(require_roles(Role.owner, Role.cashier))):
-    entries = await db.cash_entries.find().to_list(5000)
+    entries = await db.cash_entries.find({"deleted": {"$ne": True}}).to_list(5000)
     cash_in = sum(e["amount"] for e in entries if e["type"] == "in")
     cash_out = sum(e["amount"] for e in entries if e["type"] == "out")
     # receivables
@@ -876,11 +892,29 @@ async def finance_summary(user: dict = Depends(require_roles(Role.owner, Role.ca
 
 
 @api.get("/finance/cashflow")
-async def cashflow(user: dict = Depends(require_roles(Role.owner))):
-    entries = await db.cash_entries.find().sort("created_at", -1).to_list(500)
+async def cashflow(user: dict = Depends(require_roles(Role.owner, Role.cashier))):
+    entries = await db.cash_entries.find({"deleted": {"$ne": True}}).sort("created_at", -1).to_list(1000)
     for e in entries:
         e.pop("_id", None)
+        e["category_label"] = EXPENSE_LABELS.get(e.get("category", ""), e.get("category", ""))
     return entries
+
+
+@api.delete("/finance/entry/{eid}")
+async def delete_cash_entry(eid: str, user: dict = Depends(require_roles(Role.owner))):
+    existing = await db.cash_entries.find_one({"id": eid})
+    if not existing:
+        raise HTTPException(404, "Catatan tidak ditemukan")
+    await db.cash_entries.update_one({"id": eid}, {"$set": {"deleted": True, "deleted_at": now_utc()}})
+    return {"ok": True}
+
+
+@api.post("/finance/reset-history")
+async def reset_finance_history(user: dict = Depends(require_roles(Role.owner))):
+    res = await db.cash_entries.update_many(
+        {"deleted": {"$ne": True}}, {"$set": {"deleted": True, "deleted_at": now_utc()}})
+    await db.transactions.delete_many({})
+    return {"ok": True, "cleared": res.modified_count}
 
 
 @api.get("/finance/receivables", response_model=List[Transaction])
@@ -963,7 +997,7 @@ async def finance_report(period: str = "monthly",
                          user: dict = Depends(require_roles(Role.owner, Role.cashier))):
     now = datetime.now(timezone.utc)
     txns = await db.transactions.find().to_list(10000)
-    entries = await db.cash_entries.find().to_list(20000)
+    entries = await db.cash_entries.find({"deleted": {"$ne": True}}).to_list(20000)
 
     if period == "daily":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
