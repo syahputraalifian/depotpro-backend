@@ -6,3 +6,4 @@ python-dotenv
 pymongo
 pyjwt
 passlib
+email-validator
