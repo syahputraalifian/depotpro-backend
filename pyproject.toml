@@ -12,6 +12,8 @@ motor = "*"
 pydantic = "*"
 python-dotenv = "*"
 pymongo = "*"
+pyjwt = "*"
+passlib = "*"
 
 [build-system]
 requires = ["poetry-core"]
