@@ -23,6 +23,7 @@ export default function DriverScreen() {
   const [drivers, setDrivers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [userRole, setUserRole] = useState("owner");
 
   const [modalVisible, setModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -50,6 +51,14 @@ export default function DriverScreen() {
     try {
       const getApi = typeof api?.get === "function" ? api.get : null;
       if (getApi) {
+        // Cek Role User Aktif dari Backend
+        try {
+          const profile = await getApi("/auth/me");
+          if (profile && profile.role) {
+            setUserRole(profile.role.toLowerCase());
+          }
+        } catch (e) {}
+
         const res = await getApi("/drivers");
         const list = Array.isArray(res) ? res : res?.data || [];
         setDrivers(list);
@@ -66,12 +75,20 @@ export default function DriverScreen() {
   }, []);
 
   const openAddModal = () => {
+    if (userRole !== "owner") {
+      showToast("Akses Ditolak: Hanya Pemilik (Owner) yang boleh menambah data driver baru");
+      return;
+    }
     setEditingId(null);
     setFormData({ name: "", phone: "", vehicle_number: "" });
     setModalVisible(true);
   };
 
   const openEditModal = (d: any) => {
+    if (userRole !== "owner") {
+      showToast("Akses Ditolak: Hanya Pemilik (Owner) yang boleh mengedit data driver");
+      return;
+    }
     const dId = typeof d === "string" ? d : d?.id || d?._id;
     setEditingId(dId);
     setFormData({
@@ -115,8 +132,12 @@ export default function DriverScreen() {
     }
   };
 
-  // MENGGUNAKAN POLA HAPUS PERSIS DENGAN PRODUK & LAPORAN
   const handleDeleteDriver = async (target?: any) => {
+    if (userRole !== "owner") {
+      showToast("Akses Ditolak: Hanya Pemilik (Owner) yang boleh menghapus data driver");
+      return;
+    }
+
     const id = typeof target === "string" ? target : target?.id || target?._id || editingId;
     if (!id) return;
 
@@ -156,9 +177,11 @@ export default function DriverScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Manajemen Driver / Kurir</Text>
-        <Pressable onPress={openAddModal} style={styles.addHeaderBtn}>
-          <Icon name="person-add" size={22} color="#fff" />
-        </Pressable>
+        {userRole === "owner" && (
+          <Pressable onPress={openAddModal} style={styles.addHeaderBtn}>
+            <Icon name="person-add" size={22} color="#fff" />
+          </Pressable>
+        )}
       </View>
 
       <View style={styles.searchSection}>
@@ -192,9 +215,11 @@ export default function DriverScreen() {
                   <Text style={styles.cardTitle}>{d.name}</Text>
                   <Text style={styles.cardSub}>{d.phone || "Tidak ada nomor HP"}</Text>
                 </View>
-                <Pressable onPress={() => handleDeleteDriver(d)} style={{ padding: 6 }}>
-                  <Icon name="trash-outline" size={22} color="#e11d48" />
-                </Pressable>
+                {userRole === "owner" && (
+                  <Pressable onPress={() => handleDeleteDriver(d)} style={{ padding: 6 }}>
+                    <Icon name="trash-outline" size={22} color="#e11d48" />
+                  </Pressable>
+                )}
               </View>
 
               <View style={styles.vehicleTag}>
@@ -248,7 +273,7 @@ export default function DriverScreen() {
             </ScrollView>
 
             <View style={styles.modalFooter}>
-              {editingId && (
+              {editingId && userRole === "owner" && (
                 <Pressable
                   style={[styles.deleteBtn, submitting && { opacity: 0.6 }]}
                   disabled={submitting}
