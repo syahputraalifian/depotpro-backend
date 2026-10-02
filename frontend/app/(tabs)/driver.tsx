@@ -72,7 +72,7 @@ export default function DriverScreen() {
   };
 
   const openEditModal = (d: any) => {
-    const dId = typeof d === "string" ? d : d?._id || d?.id;
+    const dId = typeof d === "string" ? d : d?.id || d?._id;
     setEditingId(dId);
     setFormData({
       name: d.name || "",
@@ -115,8 +115,9 @@ export default function DriverScreen() {
     }
   };
 
+  // MENGGUNAKAN POLA HAPUS PERSIS DENGAN PRODUK & LAPORAN
   const handleDeleteDriver = async (target?: any) => {
-    const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
+    const id = typeof target === "string" ? target : target?.id || target?._id || editingId;
     if (!id) return;
 
     Alert.alert(
@@ -129,17 +130,14 @@ export default function DriverScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const delApi = typeof api?.delete === "function" ? api.delete : null;
-              if (delApi) {
-                const response = await delApi(`/drivers/${id}`);
-                if (response) {
-                  showToast("Data driver berhasil dihapus");
-                  setModalVisible(false);
-                  fetchDrivers();
-                }
+              const response = await api.delete(`/drivers/${id}`);
+              if (response) {
+                showToast("Data driver berhasil dihapus");
+                setModalVisible(false);
+                fetchDrivers();
               }
             } catch (e: any) {
-              showToast(e?.message || e?.detail || "Gagal menghapus driver");
+              showToast(e?.message || e?.detail || "Gagal menghapus data driver");
             }
           },
         },
@@ -185,7 +183,7 @@ export default function DriverScreen() {
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
           {filteredDrivers.map((d) => (
             <Pressable
-              key={d._id || d.id || d.name}
+              key={d.id || d._id || d.name}
               style={styles.card}
               onPress={() => openEditModal(d)}
             >

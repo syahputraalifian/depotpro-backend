@@ -73,7 +73,7 @@ export default function PelangganScreen() {
   };
 
   const openEditModal = (c: any) => {
-    const cId = typeof c === "string" ? c : c?._id || c?.id;
+    const cId = typeof c === "string" ? c : c?.id || c?._id;
     setEditingId(cId);
     setFormData({
       name: c.name || "",
@@ -118,8 +118,9 @@ export default function PelangganScreen() {
     }
   };
 
+  // MENGGUNAKAN POLA HAPUS PERSIS DENGAN PRODUK & LAPORAN
   const handleDeleteCustomer = async (target?: any) => {
-    const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
+    const id = typeof target === "string" ? target : target?.id || target?._id || editingId;
     if (!id) return;
 
     Alert.alert(
@@ -132,17 +133,14 @@ export default function PelangganScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const delApi = typeof api?.delete === "function" ? api.delete : null;
-              if (delApi) {
-                const response = await delApi(`/customers/${id}`);
-                if (response) {
-                  showToast("Data pelanggan berhasil dihapus");
-                  setModalVisible(false);
-                  fetchCustomers();
-                }
+              const response = await api.delete(`/customers/${id}`);
+              if (response) {
+                showToast("Data pelanggan berhasil dihapus");
+                setModalVisible(false);
+                fetchCustomers();
               }
             } catch (e: any) {
-              showToast(e?.message || e?.detail || "Gagal menghapus pelanggan");
+              showToast(e?.message || e?.detail || "Gagal menghapus data pelanggan");
             }
           },
         },
@@ -188,7 +186,7 @@ export default function PelangganScreen() {
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
           {filteredCustomers.map((c) => (
             <Pressable
-              key={c._id || c.id || c.name}
+              key={c.id || c._id || c.name}
               style={styles.card}
               onPress={() => openEditModal(c)}
             >
