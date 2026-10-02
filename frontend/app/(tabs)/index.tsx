@@ -1,234 +1,215 @@
-import { useCallback, useState } from "react";
-import { View, Text, ScrollView, RefreshControl, Pressable } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import React, { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  ActivityIndicator,
+  RefreshControl,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
-import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api";
-import { rupiah, ROLE_LABELS, timeAgo, PAYMENT_LABELS } from "@/src/format";
-import { Card, Badge, useToast } from "@/src/ui";
+import * as formatModule from "@/src/format";
 
-export default function Dashboard() {
+const safeRupiah = (val: number) => {
+  const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
+  if (typeof formatFunc === "function") {
+    try {
+      return formatFunc(val);
+    } catch {
+      return `Rp ${val || 0}`;
+    }
+  }
+  return `Rp ${(val || 0).toLocaleString("id-ID")}`;
+};
+
+export default function DashboardScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { user, signOut } = useAuth();
-  const router = useRouter();
-  
-  // Safe wrapper untuk toast agar tidak pernah "undefined is not a function"
-  const toastContext = useToast();
-  const showToast = typeof toastContext === "function" ? toastContext : (msg: string) => console.log("[Toast]:", msg);
 
-  const [summary, setSummary] = useState<any>(null);
-  const [assets, setAssets] = useState<any>(null);
-  const [low, setLow] = useState<any[]>([]);
-  const [txns, setTxns] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [data, setData] = useState<any>({
+    revenue: 0,
+    daily_revenue: 0,
+    monthly_revenue: 0,
+    transactions_count: 0,
+    low_stock_count: 0,
+    recent_transactions: [],
+    low_stock_items: [],
+  });
 
-  const canFinance = user?.role === "owner" || user?.role === "cashier";
-  const canManageStock = user?.role === "owner" || user?.role === "warehouse_admin";
-
-  const load = useCallback(async () => {
+  const fetchDashboardData = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
     try {
-      const [a, l, t] = await Promise.all([
-        api?.get("/assets/balance").catch(() => null),
-        api?.get("/inventory/low-stock").catch(() => []),
-        api?.get("/transactions?limit=8").catch(() => []),
-      ]);
-      setAssets(a);
-      setLow(Array.isArray(l) ? l : []);
-      setTxns(Array.isArray(t) ? t : []);
-      
-      if (canFinance) {
-        const sumData = await api?.get("/finance/summary").catch(() => null);
-        setSummary(sumData);
+      const getApi = typeof api?.get === "function" ? api.get : null;
+      if (getApi) {
+        const res = await getApi("/dashboard");
+        if (res) {
+          setData({
+            revenue: res.revenue || res.daily_revenue || 0,
+            daily_revenue: res.daily_revenue || res.revenue || 0,
+            monthly_revenue: res.monthly_revenue || res.revenue || 0,
+            transactions_count: res.transactions_count || 0,
+            low_stock_count: res.low_stock_count || 0,
+            recent_transactions: Array.isArray(res.recent_transactions)
+              ? res.recent_transactions
+              : [],
+            low_stock_items: Array.isArray(res.low_stock_items)
+              ? res.low_stock_items
+              : [],
+          });
+        }
       }
-    } catch (e: any) {
-      showToast(e?.message || "Gagal memuat data");
-    }
-  }, [canFinance]);
-
-  useFocusEffect(useCallback(() => { load(); }, [load]));
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
-
-  const makePO = async (p: any) => {
-    try {
-      await api?.post("/purchase-orders", { product_id: p?.id, qty: 0 });
-      showToast(`Draft PO ${p?.name || ""} dibuat`);
-    } catch (e: any) {
-      showToast(e?.message || "Gagal membuat PO");
+    } catch (e) {
+      console.log("Error fetching dashboard:", e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const safeLow = Array.isArray(low) ? low : [];
-  const safeTxns = Array.isArray(txns) ? txns : [];
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
 
   return (
-    <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.hello}>Halo, {user?.name || "Pengguna"} 👋</Text>
-          <Text style={styles.role}>{ROLE_LABELS[user?.role || ""] || "Pemilik Depot"}</Text>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerGreeting}>DepotPro ERP</Text>
+          <Text style={styles.headerTitle}>Ringkasan Bisnis</Text>
         </View>
-        <Pressable testID="logout-button" onPress={signOut} style={styles.logoutBtn}>
-          <Icon name="log-out-outline" size={22} color={colors.onBrandPrimary} />
+        <Pressable
+          onPress={() => fetchDashboardData(true)}
+          style={styles.refreshBtn}
+        >
+          <Icon name="refresh-outline" size={20} color="#fff" />
         </Pressable>
       </View>
 
-      <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}
-      >
-        {canFinance && summary && (
-          <View style={styles.kpiGrid}>
-            <Kpi label="Penjualan Hari Ini" value={rupiah(summary?.sales_today || 0)} icon="trending-up" tint={colors.brandPrimary} />
-            <Kpi label="Laba Kotor Hari Ini" value={rupiah(summary?.profit_today || 0)} icon="cash-outline" tint={colors.assetGallon} />
-            <Kpi label="Total Piutang" value={rupiah(summary?.total_receivable || 0)} icon="time-outline" tint={colors.warning} />
-            <Kpi label="Saldo Kas" value={rupiah(summary?.cash_balance || 0)} icon="wallet-outline" tint={colors.assetRefill} />
-          </View>
-        )}
-
-        {canFinance && (
-          <Pressable testID="open-reports-button" onPress={() => router.push("/reports")} style={styles.reportBtn}>
-            <Icon name="bar-chart" size={22} color={colors.onBrandPrimary} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.reportBtnTitle}>Laporan Keuangan</Text>
-              <Text style={styles.reportBtnSub}>Harian · Bulanan · Tahunan + Ekspor PDF/CSV</Text>
-            </View>
-            <Icon name="chevron-forward" size={20} color={colors.onBrandPrimary} />
-          </Pressable>
-        )}
-
-        {/* Quick actions */}
-        <View style={styles.quickRow}>
-          {(user?.role === "owner" || user?.role === "cashier") && (
-            <QuickAction icon="cart" label="Buka Kasir" onPress={() => router.push("/(tabs)/pos")} />
-          )}
-          {(user?.role === "owner" || user?.role === "warehouse_admin") && (
-            <QuickAction icon="cube" label="Stok" onPress={() => router.push("/(tabs)/stok")} />
-          )}
-          {(user?.role === "owner" || user?.role === "driver") && (
-            <QuickAction icon="car" label="Setoran" onPress={() => router.push("/(tabs)/driver")} />
-          )}
-          {(user?.role === "owner" || user?.role === "cashier") && (
-            <QuickAction icon="people" label="Pelanggan" onPress={() => router.push("/(tabs)/pelanggan")} />
-          )}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={styles.loadingText}>Memuat Ringkasan Dashboard...</Text>
         </View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchDashboardData(true)}
+            />
+          }
+        >
+          <View style={styles.mainCard}>
+            <Text style={styles.mainCardLabel}>Total Penjualan / Omzet Hari Ini</Text>
+            <Text style={styles.mainCardValue}>
+              {safeRupiah(data.revenue || data.daily_revenue || 0)}
+            </Text>
 
-        {user?.role === "owner" && (
-          <View style={styles.quickRow}>
-            <QuickAction icon="people-circle" label="Kelola Kurir" onPress={() => router.push("/manage-users")} />
-            <QuickAction icon="settings" label="Pengaturan" onPress={() => router.push("/settings")} />
-            <QuickAction icon="pricetags" label="Katalog Harga" onPress={() => router.push("/(tabs)/stok")} />
-            <QuickAction icon="bar-chart" label="Laporan" onPress={() => router.push("/reports")} />
-          </View>
-        )}
+            <View style={styles.mainCardDivider} />
 
-        {/* Asset balance / Neraca Wadah */}
-        {assets && (
-          <Card style={{ marginTop: 4 }}>
-            <Text style={styles.cardTitle}>Neraca Aset Wadah</Text>
-            <Text style={styles.cardSub}>Total tabung & galon: {assets?.total_assets || 0} unit</Text>
-            <View style={styles.assetRow}>
-              <AssetStat label="Isi Gudang" value={assets?.filled_warehouse || 0} color={colors.brandPrimary} />
-              <AssetStat label="Kosong Gudang" value={assets?.empty_warehouse || 0} color={colors.assetGallon} />
-              <AssetStat label="Di Kurir" value={assets?.in_driver || 0} color={colors.assetRefill} />
-              <AssetStat label="Dipinjam" value={assets?.borrowed_customers || 0} color={colors.warning} />
+            <View style={styles.mainCardSubRow}>
+              <View>
+                <Text style={styles.mainCardSubLabel}>Total Transaksi</Text>
+                <Text style={styles.mainCardSubValue}>
+                  {data.transactions_count || 0} Penjualan
+                </Text>
+              </View>
+
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={styles.mainCardSubLabel}>Peringatan Stok Low</Text>
+                <Text
+                  style={[
+                    styles.mainCardSubValue,
+                    (data.low_stock_count || 0) > 0 && { color: "#fca5a5" },
+                  ]}
+                >
+                  {data.low_stock_count || 0} Produk
+                </Text>
+              </View>
             </View>
-          </Card>
-        )}
-
-        {/* Low stock */}
-        <Card style={{ marginTop: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Icon name="alert-circle" size={18} color={colors.error} />
-            <Text style={styles.cardTitle}>Stok Menipis</Text>
           </View>
-          {safeLow.length === 0 ? (
-            <Text style={styles.emptyLine}>Semua stok aman ✅</Text>
-          ) : (
-            safeLow.map((p) => {
-              const critical = (p?.stock_filled ?? 0) <= 0;
-              return (
-                <View key={p?.id || Math.random().toString()} style={styles.lowRow}>
-                  <Text style={styles.lowName}>{p?.name || "Produk"}</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Badge text={critical ? "Kritis" : `Sisa ${p?.stock_filled ?? 0}`} bg={colors.receivableBadge} fg={colors.onReceivableBadge} />
-                    {canManageStock && (
-                      <Pressable testID={`dash-po-${p?.id}`} onPress={() => makePO(p)} style={styles.dashPoBtn}>
-                        <Text style={styles.dashPoText}>Buat PO</Text>
-                      </Pressable>
-                    )}
+
+          <View style={styles.gridContainer}>
+            <View style={styles.gridCard}>
+              <View style={[styles.gridIconBg, { backgroundColor: "#dcfce7" }]}>
+                <Icon name="wallet-outline" size={20} color="#16a34a" />
+              </View>
+              <Text style={styles.gridLabel}>Omzet Bulanan</Text>
+              <Text style={styles.gridValue}>
+                {safeRupiah(data.monthly_revenue || data.revenue || 0)}
+              </Text>
+            </View>
+
+            <View style={styles.gridCard}>
+              <View style={[styles.gridIconBg, { backgroundColor: "#fee2e2" }]}>
+                <Icon name="alert-circle-outline" size={20} color="#dc2626" />
+              </View>
+              <Text style={styles.gridLabel}>Stok Menipis</Text>
+              <Text style={[styles.gridValue, { color: "#dc2626" }]}>
+                {data.low_stock_count || 0} Item
+              </Text>
+            </View>
+          </View>
+
+          {Array.isArray(data.low_stock_items) && data.low_stock_items.length > 0 && (
+            <View style={styles.sectionContainer}>
+              <Text style={styles.sectionTitle}>⚠️ Perlu Reorder Stok</Text>
+              {data.low_stock_items.map((item: any, idx: number) => (
+                <View key={item.id || item._id || idx} style={styles.warningItemCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.warningItemTitle}>{item.name}</Text>
+                    <Text style={styles.warningItemSub}>
+                      Stok Kosong: {item.stock_empty || 0}
+                    </Text>
+                  </View>
+                  <View style={styles.warningBadge}>
+                    <Text style={styles.warningBadgeText}>
+                      Sisa: {item.stock_filled || 0}
+                    </Text>
                   </View>
                 </View>
-              );
-            })
+              ))}
+            </View>
           )}
-        </Card>
 
-        {/* Recent transactions */}
-        <Card style={{ marginTop: 14 }}>
-          <Text style={styles.cardTitle}>Transaksi Terbaru</Text>
-          {safeTxns.length === 0 ? (
-            <Text style={styles.emptyLine}>Belum ada transaksi</Text>
-          ) : (
-            safeTxns.map((t) => (
-              <View key={t?.id || Math.random().toString()} style={styles.txnRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.txnName}>{t?.customer_name || "Pelanggan Umum"}</Text>
-                  <Text style={styles.txnMeta}>
-                    {t?.invoice_no || "-"} • {PAYMENT_LABELS[t?.payment_method] || "Tunai"} • {t?.created_at ? timeAgo(t.created_at) : "Baru saja"}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>🕒 Transaksi Terakhir</Text>
+            {Array.isArray(data.recent_transactions) && data.recent_transactions.length > 0 ? (
+              data.recent_transactions.map((tx: any, idx: number) => (
+                <View key={tx.id || tx._id || idx} style={styles.txRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txCustomer}>
+                      {tx.customer_name || "Pelanggan Umum"}
+                    </Text>
+                    <Text style={styles.txMeta}>
+                      {(tx.payment_method || "cash").toUpperCase()} •{" "}
+                      {tx.created_at
+                        ? new Date(tx.created_at).toLocaleTimeString("id-ID", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "Baru saja"}
+                    </Text>
+                  </View>
+                  <Text style={styles.txAmount}>
+                    {safeRupiah(tx.total_amount || 0)}
                   </Text>
                 </View>
-                <View style={{ alignItems: "flex-end" }}>
-                  <Text style={styles.txnAmt}>{rupiah(t?.total || 0)}</Text>
-                  {t?.status === "outstanding" && <Badge text="Tempo" bg={colors.depositBadge} fg={colors.onDepositBadge} />}
-                </View>
-              </View>
-            ))
-          )}
-        </Card>
-      </ScrollView>
-    </View>
-  );
-}
-
-function Kpi({ label, value, icon, tint }: any) {
-  const styles = useStyles();
-  return (
-    <View style={styles.kpiCard}>
-      <Icon name={icon} size={20} color={tint} />
-      <Text style={styles.kpiValue}>{value}</Text>
-      <Text style={styles.kpiLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function QuickAction({ icon, label, onPress }: any) {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  return (
-    <Pressable testID={`quick-${label.toLowerCase().replace(/\s/g, "-")}`} onPress={onPress} style={styles.quickItem}>
-      <View style={styles.quickIcon}>
-        <Icon name={icon} size={22} color={colors.brandPrimary} />
-      </View>
-      <Text style={styles.quickLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function AssetStat({ label, value, color }: any) {
-  const styles = useStyles();
-  return (
-    <View style={styles.assetStat}>
-      <Text style={[styles.assetValue, { color }]}>{value}</Text>
-      <Text style={styles.assetLabel}>{label}</Text>
+              ))
+            ) : (
+              <Text style={styles.emptyText}>Belum ada riwayat transaksi hari ini.</Text>
+            )}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -236,39 +217,87 @@ function AssetStat({ label, value, color }: any) {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   header: {
-    flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 16,
-    backgroundColor: c.brand, borderBottomLeftRadius: 20, borderBottomRightRadius: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: c.brandPrimary,
   },
-  hello: { color: c.onBrandPrimary, fontSize: 18, fontWeight: "800" },
-  role: { color: c.onBrandPrimary, opacity: 0.85, fontSize: 12, marginTop: 2 },
-  logoutBtn: { width: 42, height: 42, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
-  kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 16 },
-  kpiCard: {
-    width: "47%", flexGrow: 1, backgroundColor: c.surfaceSecondary, borderRadius: 16, padding: 14,
-    borderWidth: 1, borderColor: c.border,
+  headerGreeting: { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "600" },
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  refreshBtn: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 8 },
+  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  loadingText: { marginTop: 8, fontSize: 13, color: c.muted },
+  mainCard: {
+    backgroundColor: c.brandPrimary,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
   },
-  kpiValue: { fontSize: 18, fontWeight: "800", color: c.onSurface, marginTop: 8 },
-  kpiLabel: { fontSize: 12, color: c.muted, marginTop: 2 },
-  quickRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
-  reportBtn: { flexDirection: "row", alignItems: "center", backgroundColor: c.brand, borderRadius: 16, padding: 16, marginBottom: 16 },
-  reportBtnTitle: { color: c.onBrand, fontSize: 16, fontWeight: "800" },
-  reportBtnSub: { color: c.onBrand, opacity: 0.8, fontSize: 12, marginTop: 2 },
-  quickItem: { alignItems: "center", flex: 1 },
-  quickIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: 6 },
-  quickLabel: { fontSize: 11, color: c.onSurfaceSecondary, fontWeight: "600" },
-  cardTitle: { fontSize: 15, fontWeight: "800", color: c.onSurface },
-  cardSub: { fontSize: 12, color: c.muted, marginTop: 2 },
-  assetRow: { flexDirection: "row", marginTop: 14, gap: 8 },
-  assetStat: { flex: 1, alignItems: "center", backgroundColor: c.surfaceTertiary, borderRadius: 12, paddingVertical: 12 },
-  assetValue: { fontSize: 20, fontWeight: "800" },
-  assetLabel: { fontSize: 10, color: c.muted, marginTop: 4, textAlign: "center" },
-  emptyLine: { color: c.muted, fontSize: 13, marginTop: 10 },
-  lowRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
-  lowName: { color: c.onSurface, fontSize: 14, fontWeight: "600", flex: 1 },
-  dashPoBtn: { backgroundColor: c.brandPrimary, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999 },
-  dashPoText: { color: c.onBrandPrimary, fontSize: 11, fontWeight: "700" },
-  txnRow: { flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8 },
-  txnName: { color: c.onSurface, fontSize: 14, fontWeight: "700" },
-  txnMeta: { color: c.muted, fontSize: 11, marginTop: 2 },
-  txnAmt: { color: c.onSurface, fontSize: 14, fontWeight: "800" },
+  mainCardLabel: { color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "600" },
+  mainCardValue: { color: "#fff", fontSize: 28, fontWeight: "800", marginVertical: 6 },
+  mainCardDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    marginVertical: 12,
+  },
+  mainCardSubRow: { flexDirection: "row", justifyContent: "space-between" },
+  mainCardSubLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
+  mainCardSubValue: { color: "#fff", fontSize: 13, fontWeight: "800", marginTop: 2 },
+  gridContainer: { flexDirection: "row", gap: 10, marginBottom: 16 },
+  gridCard: {
+    flex: 1,
+    backgroundColor: c.surfaceSecondary,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: c.border,
+  },
+  gridIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  gridLabel: { fontSize: 11, color: c.muted },
+  gridValue: { fontSize: 14, fontWeight: "800", color: c.onSurface, marginTop: 2 },
+  sectionContainer: { marginTop: 8, marginBottom: 12 },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: c.onSurface,
+    marginBottom: 10,
+  },
+  warningItemCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff1f2",
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+    marginBottom: 8,
+  },
+  warningItemTitle: { fontSize: 13, fontWeight: "700", color: "#9f1239" },
+  warningItemSub: { fontSize: 11, color: "#be123c", marginTop: 2 },
+  warningBadge: { backgroundColor: "#e11d48", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  warningBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  txRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: c.surface,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: c.border,
+    marginBottom: 8,
+  },
+  txCustomer: { fontSize: 13, fontWeight: "700", color: c.onSurface },
+  txMeta: { fontSize: 11, color: c.muted, marginTop: 2 },
+  txAmount: { fontSize: 13, fontWeight: "800", color: c.brandPrimary },
+  emptyText: { fontSize: 12, color: c.muted, fontStyle: "italic" },
 }));
