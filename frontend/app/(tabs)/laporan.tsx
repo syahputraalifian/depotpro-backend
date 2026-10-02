@@ -78,17 +78,32 @@ export default function LaporanScreen() {
     fetchReports();
   }, []);
 
-  const handleDeleteTx = (txId: string) => {
+  // PEMANGGILAN HAPUS TRANSAKSI LAPORAN PRESISI
+  const handleDeleteTx = (targetParam: any) => {
+    let txId = "";
+    if (typeof targetParam === "string") {
+      txId = targetParam;
+    } else if (targetParam && typeof targetParam === "object") {
+      txId = targetParam.id || targetParam._id;
+    }
+
+    if (!txId) {
+      Alert.alert("Error", "ID Transaksi tidak ditemukan");
+      return;
+    }
+
     Alert.alert("Konfirmasi Hapus", "Hapus riwayat transaksi ini dari database?", [
       { text: "Batal", style: "cancel" },
       {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
+          // Hapus instan dari UI lokal
           setReportData((prev: any) => ({
             ...prev,
-            data: (prev.data || []).filter((item: any) => item.id !== txId),
+            data: (prev.data || []).filter((item: any) => (item.id || item._id) !== txId),
           }));
+
           try {
             const delApi = typeof api?.delete === "function" ? api.delete : null;
             if (delApi) {
@@ -97,7 +112,7 @@ export default function LaporanScreen() {
             showToast("Riwayat transaksi terhapus");
             fetchReports();
           } catch (e) {
-            console.log("Error delete:", e);
+            console.log("Error delete tx:", e);
           }
         },
       },
@@ -169,7 +184,7 @@ export default function LaporanScreen() {
 
           <Text style={styles.sectionTitle}>Riwayat Transaksi Penjualan</Text>
           {transactions.map((tx: any, idx: number) => (
-            <View key={tx?.id || idx} style={styles.txCard}>
+            <View key={tx?.id || tx?._id || idx} style={styles.txCard}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.txCustomer}>{tx?.customer_name || "Pelanggan Umum"}</Text>
                 <Text style={styles.txMeta}>
@@ -183,8 +198,8 @@ export default function LaporanScreen() {
                 </Text>
               </View>
               <Text style={styles.txAmount}>{safeRupiah(tx?.total_amount || 0)}</Text>
-              <Pressable onPress={() => handleDeleteTx(tx.id)} style={{ paddingLeft: 12 }}>
-                <Icon name="trash-outline" size={20} color="#e11d48" />
+              <Pressable onPress={() => handleDeleteTx(tx)} style={{ paddingLeft: 12 }}>
+                <Icon name="trash-outline" size={22} color="#e11d48" />
               </Pressable>
             </View>
           ))}
@@ -209,8 +224,6 @@ const useStyles = makeStyles((c) => ({
   breakdownCard: { flex: 1, backgroundColor: c.surfaceSecondary, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.border, alignItems: "flex-start" },
   breakdownLabel: { fontSize: 11, color: c.muted, marginTop: 6 },
   breakdownValue: { fontSize: 13, fontWeight: "800", color: c.onSurface, marginTop: 2 },
-  emptyContainer: { padding: 30, alignItems: "center" },
-  emptyText: { marginTop: 8, color: c.muted, fontSize: 13 },
   txCard: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: c.surface, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: c.border, marginBottom: 8 },
   txCustomer: { fontSize: 14, fontWeight: "700", color: c.onSurface },
   txMeta: { fontSize: 11, color: c.muted, marginTop: 2 },

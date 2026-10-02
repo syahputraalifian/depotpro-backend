@@ -10,6 +10,9 @@ import jwt
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# ==========================================
+# KONFIGURASI & MONGODB ATLAS INTEGRATION
+# ==========================================
 JWT_SECRET = os.getenv("JWT_SECRET", "depotpro_super_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
@@ -46,12 +49,20 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
 async def remove_document(collection, item_id: str):
-    query = {"$or": [{"id": item_id}]}
+    """Fungsi penghapus dokumen fleksibel berdasarkan id UUID string, _id string, atau ObjectId."""
+    if not item_id:
+        return False
+    
+    or_conditions = [{"id": item_id}, {"_id": item_id}]
     if ObjectId.is_valid(item_id):
-        query["$or"].append({"_id": ObjectId(item_id)})
-    res = await collection.delete_one(query)
+        or_conditions.append({"_id": ObjectId(item_id)})
+        
+    res = await collection.delete_one({"$or": or_conditions})
     return res.deleted_count > 0
 
+# ==========================================
+# AUTH ENDPOINTS
+# ==========================================
 @app.get("/")
 @app.get("/api")
 async def root():
@@ -80,6 +91,14 @@ async def login(payload: Dict[str, Any] = Body(...)):
 
     raise HTTPException(status_code=401, detail="Email atau password salah")
 
+@app.get("/users/me")
+@app.get("/api/users/me")
+async def get_me():
+    return {"email": "owner@gasgalon.id", "name": "Pemilik Depot", "role": "owner"}
+
+# ==========================================
+# DASHBOARD ENDPOINT
+# ==========================================
 @app.get("/dashboard")
 @app.get("/api/dashboard")
 async def get_dashboard():
@@ -114,36 +133,9 @@ async def get_dashboard():
     except Exception as e:
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
-@app.delete("/products/{product_id}")
-@app.delete("/api/products/{product_id}")
-async def delete_product(product_id: str):
-    if await remove_document(db.products, product_id):
-        return {"status": "success", "message": "Produk berhasil dihapus"}
-    raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-
-@app.delete("/customers/{customer_id}")
-@app.delete("/api/customers/{customer_id}")
-async def delete_customer(customer_id: str):
-    if await remove_document(db.customers, customer_id):
-        return {"status": "success", "message": "Pelanggan berhasil dihapus"}
-    raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
-
-@app.delete("/drivers/{driver_id}")
-@app.delete("/api/drivers/{driver_id}")
-async def delete_driver(driver_id: str):
-    if await remove_document(db.drivers, driver_id):
-        return {"status": "success", "message": "Driver berhasil dihapus"}
-    raise HTTPException(status_code=404, detail="Driver tidak ditemukan")
-
-@app.delete("/reports/{tx_id}")
-@app.delete("/api/reports/{tx_id}")
-@app.delete("/transactions/{tx_id}")
-@app.delete("/api/transactions/{tx_id}")
-async def delete_transaction(tx_id: str):
-    if await remove_document(db.transactions, tx_id):
-        return {"status": "success", "message": "Transaksi berhasil dihapus"}
-    raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
-
+# ==========================================
+# PRODUCTS (GET, POST, DELETE)
+# ==========================================
 @app.get("/products")
 @app.get("/api/products")
 async def get_products():
@@ -157,10 +149,20 @@ async def get_products():
 @app.post("/api/products")
 async def create_product(payload: Dict[str, Any] = Body(...)):
     if not payload.get("id"):
-        payload["id"] = f"prod-{uuid.uuid4().hex[:8]}"
+        payload["id"] = str(uuid.uuid4())
     await db.products.update_one({"id": payload["id"]}, {"$set": payload}, upsert=True)
     return payload
 
+@app.delete("/products/{product_id}")
+@app.delete("/api/products/{product_id}")
+async def delete_product(product_id: str):
+    if await remove_document(db.products, product_id):
+        return {"status": "success", "message": "Produk berhasil dihapus"}
+    raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+
+# ==========================================
+# CUSTOMERS (GET, POST, DELETE)
+# ==========================================
 @app.get("/customers")
 @app.get("/api/customers")
 async def get_customers():
@@ -174,10 +176,20 @@ async def get_customers():
 @app.post("/api/customers")
 async def create_customer(payload: Dict[str, Any] = Body(...)):
     if not payload.get("id"):
-        payload["id"] = f"cust-{uuid.uuid4().hex[:8]}"
+        payload["id"] = str(uuid.uuid4())
     await db.customers.update_one({"id": payload["id"]}, {"$set": payload}, upsert=True)
     return payload
 
+@app.delete("/customers/{customer_id}")
+@app.delete("/api/customers/{customer_id}")
+async def delete_customer(customer_id: str):
+    if await remove_document(db.customers, customer_id):
+        return {"status": "success", "message": "Pelanggan berhasil dihapus"}
+    raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+
+# ==========================================
+# REPORTS & TRANSACTIONS (GET, POST, DELETE)
+# ==========================================
 @app.get("/reports")
 @app.get("/api/reports")
 async def get_reports():
@@ -191,7 +203,7 @@ async def get_reports():
 @app.post("/transactions")
 @app.post("/api/transactions")
 async def create_transaction(payload: Dict[str, Any] = Body(...)):
-    payload["id"] = f"tx-{uuid.uuid4().hex[:8]}"
+    payload["id"] = str(uuid.uuid4())
     payload["created_at"] = datetime.utcnow().isoformat()
     await db.transactions.insert_one(payload)
     for item in payload.get("items", []):
@@ -203,6 +215,18 @@ async def create_transaction(payload: Dict[str, Any] = Body(...)):
         del payload["_id"]
     return {"status": "success", "data": payload}
 
+@app.delete("/reports/{tx_id}")
+@app.delete("/api/reports/{tx_id}")
+@app.delete("/transactions/{tx_id}")
+@app.delete("/api/transactions/{tx_id}")
+async def delete_transaction(tx_id: str):
+    if await remove_document(db.transactions, tx_id):
+        return {"status": "success", "message": "Transaksi berhasil dihapus"}
+    raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+
+# ==========================================
+# DRIVERS (GET, POST, DELETE)
+# ==========================================
 @app.get("/drivers")
 @app.get("/api/drivers")
 async def get_drivers():
@@ -216,9 +240,16 @@ async def get_drivers():
 @app.post("/api/drivers")
 async def create_driver(payload: Dict[str, Any] = Body(...)):
     if not payload.get("id"):
-        payload["id"] = f"driver-{uuid.uuid4().hex[:8]}"
+        payload["id"] = str(uuid.uuid4())
     await db.drivers.update_one({"id": payload["id"]}, {"$set": payload}, upsert=True)
     return payload
+
+@app.delete("/drivers/{driver_id}")
+@app.delete("/api/drivers/{driver_id}")
+async def delete_driver(driver_id: str):
+    if await remove_document(db.drivers, driver_id):
+        return {"status": "success", "message": "Driver berhasil dihapus"}
+    raise HTTPException(status_code=404, detail="Driver tidak ditemukan")
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
