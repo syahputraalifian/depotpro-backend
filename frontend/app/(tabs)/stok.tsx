@@ -7,7 +7,6 @@ import {
   TextInput,
   ActivityIndicator,
   Modal,
-  Switch,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
@@ -38,7 +37,6 @@ export default function StokScreen() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
 
-  // State Form Modal Tambah/Edit Produk
   const [modalVisible, setModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -174,6 +172,24 @@ export default function StokScreen() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!editingId) return;
+    setSubmitting(true);
+    try {
+      const delApi = typeof api?.delete === "function" ? api.delete : null;
+      if (delApi) {
+        await delApi(`/products/${editingId}`);
+      }
+      showToast("Produk berhasil dihapus");
+      setModalVisible(false);
+      fetchProducts();
+    } catch (e: any) {
+      showToast("Gagal menghapus produk");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchSearch = (p.name || "").toLowerCase().includes(search.toLowerCase());
@@ -184,7 +200,6 @@ export default function StokScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Manajemen Stok & Gudang</Text>
         <Pressable onPress={openAddModal} style={styles.addHeaderBtn}>
@@ -192,7 +207,6 @@ export default function StokScreen() {
         </Pressable>
       </View>
 
-      {/* Filter & Search Bar */}
       <View style={styles.searchSection}>
         <View style={styles.searchBox}>
           <Icon name="search" size={18} color={colors.muted} />
@@ -228,7 +242,6 @@ export default function StokScreen() {
         </ScrollView>
       </View>
 
-      {/* Content List */}
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.brandPrimary} />
@@ -260,7 +273,6 @@ export default function StokScreen() {
                   )}
                 </View>
 
-                {/* Stock Metric Grid */}
                 <View style={styles.stockMetricRow}>
                   <View style={styles.metricItem}>
                     <Text style={styles.metricLabel}>Stok Terisi</Text>
@@ -282,7 +294,6 @@ export default function StokScreen() {
                   </View>
                 </View>
 
-                {/* Price Summary */}
                 <View style={styles.priceSummaryRow}>
                   <Text style={styles.priceSummaryText}>
                     Harga Eceran: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{safeRupiah(p.price_eceran)}</Text>
@@ -297,7 +308,6 @@ export default function StokScreen() {
         </ScrollView>
       )}
 
-      {/* Form Modal Tambah / Edit Produk */}
       <Modal visible={modalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -374,6 +384,15 @@ export default function StokScreen() {
             </ScrollView>
 
             <View style={styles.modalFooter}>
+              {editingId && (
+                <Pressable
+                  style={[styles.deleteBtn, submitting && { opacity: 0.6 }]}
+                  disabled={submitting}
+                  onPress={handleDelete}
+                >
+                  <Text style={styles.deleteBtnText}>Hapus Produk Ini</Text>
+                </Pressable>
+              )}
               <Pressable
                 style={[styles.saveBtn, submitting && { opacity: 0.6 }]}
                 disabled={submitting}
@@ -424,7 +443,9 @@ const useStyles = makeStyles((c) => ({
   modalTitle: { fontSize: 16, fontWeight: "800", color: c.onSurface },
   inputLabel: { fontSize: 12, fontWeight: "700", color: c.onSurface, marginTop: 4 },
   input: { height: 42, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 10, color: c.onSurface, backgroundColor: c.surfaceSecondary },
-  modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: c.border },
+  modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: c.border, gap: 8 },
+  deleteBtn: { backgroundColor: "#e11d48", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  deleteBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
   saveBtn: { backgroundColor: c.brandPrimary, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
   saveBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 }));

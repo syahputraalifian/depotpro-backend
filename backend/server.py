@@ -16,9 +16,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "depotpro_super_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
-# Connection String MongoDB Atlas & Database Name: gasgalon_erp
 ATLAS_MONGO_URI = "mongodb+srv://syahputraalifian_db_user:t5RklJ9LCVT6HFcy@cluster0.il9x6dt.mongodb.net/gasgalon_erp?retryWrites=true&w=majority"
-
 MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URL") or ATLAS_MONGO_URI
 DB_NAME = os.getenv("DB_NAME", "gasgalon_erp")
 
@@ -93,9 +91,7 @@ async def startup_event():
                 }
             ]
             await db.products.insert_many(initial_products)
-            print("🌱 [SEED] Berhasil menginisialisasi produk awal ke MongoDB Atlas (gasgalon_erp)")
-        else:
-            print(f"✅ [MONGO CONNECTED] Terhubung ke gasgalon_erp ({count} produk tersedia)")
+            print("🌱 [SEED] Berhasil menginisialisasi produk awal")
     except Exception as e:
         print(f"⚠️ [MONGO WARNING] Gagal menginisialisasi DB: {e}")
 
@@ -150,7 +146,6 @@ async def get_dashboard():
             {"$group": {"_id": None, "total_revenue": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
         ]
         agg_result = await db.transactions.aggregate(pipeline).to_list(length=1)
-        
         revenue = agg_result[0]["total_revenue"] if agg_result else 0
         tx_count = agg_result[0]["count"] if agg_result else 0
 
@@ -177,7 +172,6 @@ async def get_dashboard():
             "data": []
         }
     except Exception as e:
-        print(f"Error dashboard: {e}")
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
 @app.get("/reports")
@@ -204,10 +198,19 @@ async def get_reports():
     except Exception as e:
         return {"daily": 0, "monthly": 0, "yearly": 0, "total_transactions": 0, "data": []}
 
-# ====================================================================
-# API PRODUCT HANDLERS (MongoDB Persistent)
-# ====================================================================
+@app.delete("/reports/{tx_id}")
+@app.delete("/api/reports/{tx_id}")
+@app.delete("/transactions/{tx_id}")
+@app.delete("/api/transactions/{tx_id}")
+async def delete_transaction(tx_id: str):
+    res = await db.transactions.delete_one({"id": tx_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    return {"status": "success", "message": "Riwayat transaksi berhasil dihapus"}
 
+# ====================================================================
+# PRODUCTS
+# ====================================================================
 class ProductModel(BaseModel):
     id: Optional[str] = None
     name: str
@@ -228,39 +231,38 @@ class ProductModel(BaseModel):
 @app.get("/products")
 @app.get("/api/products")
 async def get_products_real():
-    try:
-        products = []
-        cursor = db.products.find({}, {"_id": 0})
-        async for doc in cursor:
-            products.append(doc)
-        return products
-    except Exception as e:
-        print(f"Error fetching products: {e}")
-        return []
+    products = []
+    cursor = db.products.find({}, {"_id": 0})
+    async for doc in cursor:
+        products.append(doc)
+    return products
 
 @app.post("/products")
 @app.post("/api/products")
 async def create_product_real(product: ProductModel):
-    try:
-        new_product = product.dict()
-        if not new_product.get("id"):
-            new_product["id"] = f"prod-{uuid.uuid4().hex[:8]}"
-        new_product["total_sold"] = new_product.get("total_sold", 0)
+    new_product = product.dict()
+    if not new_product.get("id"):
+        new_product["id"] = f"prod-{uuid.uuid4().hex[:8]}"
+    new_product["total_sold"] = new_product.get("total_sold", 0)
 
-        await db.products.update_one(
-            {"id": new_product["id"]},
-            {"$set": new_product},
-            upsert=True
-        )
-        print(f"[SUCCESS MONGO] Produk berhasil disimpan: {new_product['name']}")
-        return new_product
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal menyimpan ke MongoDB: {str(e)}")
+    await db.products.update_one(
+        {"id": new_product["id"]},
+        {"$set": new_product},
+        upsert=True
+    )
+    return new_product
+
+@app.delete("/products/{product_id}")
+@app.delete("/api/products/{product_id}")
+async def delete_product(product_id: str):
+    res = await db.products.delete_one({"id": product_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    return {"status": "success", "message": "Produk berhasil dihapus"}
 
 # ====================================================================
-# TRANSACTIONS & CHECKOUT
+# TRANSACTIONS
 # ====================================================================
-
 class TransactionItemModel(BaseModel):
     product_id: str
     product_name: str
@@ -276,37 +278,26 @@ class TransactionModel(BaseModel):
 @app.post("/transactions")
 @app.post("/api/transactions")
 async def create_transaction(tx: TransactionModel):
-    try:
-        tx_data = tx.dict()
-        tx_data["id"] = f"tx-{uuid.uuid4().hex[:8]}"
-        tx_data["created_at"] = datetime.utcnow().isoformat()
+    tx_data = tx.dict()
+    tx_data["id"] = f"tx-{uuid.uuid4().hex[:8]}"
+    tx_data["created_at"] = datetime.utcnow().isoformat()
 
-        await db.transactions.insert_one(tx_data)
+    await db.transactions.insert_one(tx_data)
 
-        for item in tx.items:
-            await db.products.update_one(
-                {"id": item.product_id},
-                {
-                    "$inc": {
-                        "stock_filled": -item.qty,
-                        "total_sold": item.qty
-                    }
-                }
-            )
+    for item in tx.items:
+        await db.products.update_one(
+            {"id": item.product_id},
+            {"$inc": {"stock_filled": -item.qty, "total_sold": item.qty}}
+        )
 
-        if "_id" in tx_data:
-            del tx_data["_id"]
+    if "_id" in tx_data:
+        del tx_data["_id"]
 
-        print(f"[TRANSACTION SUCCESS] TX ID: {tx_data['id']} | Total: {tx_data['total_amount']}")
-        return {"status": "success", "data": tx_data}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal memproses transaksi: {str(e)}")
+    return {"status": "success", "data": tx_data}
 
 # ====================================================================
-# API PELANGGAN & DRIVER HANDLERS
+# CUSTOMERS
 # ====================================================================
-
 class CustomerModel(BaseModel):
     id: Optional[str] = None
     name: str
@@ -319,31 +310,66 @@ class CustomerModel(BaseModel):
 @app.get("/customers")
 @app.get("/api/customers")
 async def get_customers():
-    try:
-        customers = []
-        cursor = db.customers.find({}, {"_id": 0})
-        async for doc in cursor:
-            customers.append(doc)
-        return customers
-    except Exception as e:
-        return []
+    customers = []
+    cursor = db.customers.find({}, {"_id": 0})
+    async for doc in cursor:
+        customers.append(doc)
+    return customers
 
 @app.post("/customers")
 @app.post("/api/customers")
 async def create_customer(cust: CustomerModel):
-    try:
-        cust_data = cust.dict()
-        if not cust_data.get("id"):
-            cust_data["id"] = f"cust-{uuid.uuid4().hex[:8]}"
-            
-        await db.customers.update_one(
-            {"id": cust_data["id"]},
-            {"$set": cust_data},
-            upsert=True
-        )
-        return {"status": "success", "data": cust_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    cust_data = cust.dict()
+    if not cust_data.get("id"):
+        cust_data["id"] = f"cust-{uuid.uuid4().hex[:8]}"
+
+    await db.customers.update_one(
+        {"id": cust_data["id"]},
+        {"$set": cust_data},
+        upsert=True
+    )
+    return {"status": "success", "data": cust_data}
+
+@app.delete("/customers/{customer_id}")
+@app.delete("/api/customers/{customer_id}")
+async def delete_customer(customer_id: str):
+    res = await db.customers.delete_one({"id": customer_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+    return {"status": "success", "message": "Pelanggan berhasil dihapus"}
+
+# ====================================================================
+# DRIVERS & DELIVERIES
+# ====================================================================
+class DriverModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    phone: str
+    status: str = "active"
+
+@app.get("/drivers")
+@app.get("/api/drivers")
+async def get_drivers():
+    drivers = []
+    cursor = db.drivers.find({}, {"_id": 0})
+    async for doc in cursor:
+        drivers.append(doc)
+    return drivers
+
+@app.post("/drivers")
+@app.post("/api/drivers")
+async def create_driver(driver: DriverModel):
+    data = driver.dict()
+    if not data.get("id"):
+        data["id"] = f"driver-{uuid.uuid4().hex[:8]}"
+    await db.drivers.update_one({"id": data["id"]}, {"$set": data}, upsert=True)
+    return {"status": "success", "data": data}
+
+@app.delete("/drivers/{driver_id}")
+@app.delete("/api/drivers/{driver_id}")
+async def delete_driver(driver_id: str):
+    await db.drivers.delete_one({"id": driver_id})
+    return {"status": "success", "message": "Driver berhasil dihapus"}
 
 class DeliveryOrderModel(BaseModel):
     driver_name: str
@@ -357,38 +383,47 @@ class DeliveryOrderModel(BaseModel):
 @app.get("/deliveries")
 @app.get("/api/deliveries")
 async def get_deliveries():
-    try:
-        deliveries = []
-        cursor = db.deliveries.find({}, {"_id": 0}).sort("created_at", -1)
-        async for doc in cursor:
-            deliveries.append(doc)
-        return deliveries
-    except Exception as e:
-        return []
+    deliveries = []
+    cursor = db.deliveries.find({}, {"_id": 0}).sort("created_at", -1)
+    async for doc in cursor:
+        deliveries.append(doc)
+    return deliveries
 
 @app.post("/deliveries")
 @app.post("/api/deliveries")
 async def create_delivery(delivery: DeliveryOrderModel):
-    try:
-        deliv_data = delivery.dict()
-        deliv_data["id"] = f"deliv-{uuid.uuid4().hex[:8]}"
-        deliv_data["created_at"] = datetime.utcnow().isoformat()
+    deliv_data = delivery.dict()
+    deliv_data["id"] = f"deliv-{uuid.uuid4().hex[:8]}"
+    deliv_data["created_at"] = datetime.utcnow().isoformat()
 
-        await db.deliveries.insert_one(deliv_data)
-        if "_id" in deliv_data:
-            del deliv_data["_id"]
+    await db.deliveries.insert_one(deliv_data)
+    if "_id" in deliv_data:
+        del deliv_data["_id"]
 
-        return {"status": "success", "data": deliv_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "success", "data": deliv_data}
+
+@app.post("/deliveries/{delivery_id}/status")
+@app.put("/deliveries/{delivery_id}/status")
+async def update_delivery_status(delivery_id: str, payload: Dict[str, Any] = Body(...)):
+    new_status = payload.get("status", "completed")
+    res = await db.deliveries.find_one_and_update(
+        {"id": delivery_id},
+        {"$set": {"status": new_status}},
+        return_document=True
+    )
+    if new_status == "completed" and res:
+        for item in res.get("items", []):
+            await db.products.update_one(
+                {"id": item.get("product_id")},
+                {"$inc": {"stock_filled": -item.get("qty", 0), "total_sold": item.get("qty", 0)}}
+            )
+    return {"status": "success", "message": f"Status updated to {new_status}"}
 
 # ====================================================================
 # CATCH-ALL WILDCARD
 # ====================================================================
-
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
-    print(f"🚨 REQUEST DIPEGANG CATCH-ALL: {request.method} /{full_path}")
     return {
         "status": "success",
         "message": f"Intercepted: {full_path}",

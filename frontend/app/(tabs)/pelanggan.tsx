@@ -24,6 +24,7 @@ export default function PelangganScreen() {
   const [search, setSearch] = useState("");
   const [modalVisible, setModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -65,6 +66,32 @@ export default function PelangganScreen() {
     fetchCustomers();
   }, []);
 
+  const openAddModal = () => {
+    setEditingId(null);
+    setFormData({
+      name: "",
+      phone: "",
+      address: "",
+      type: "eceran",
+      gallon_deposit_qty: "0",
+      lpg_deposit_qty: "0",
+    });
+    setModalVisible(true);
+  };
+
+  const openEditModal = (c: any) => {
+    setEditingId(c.id);
+    setFormData({
+      name: c.name || "",
+      phone: c.phone || "",
+      address: c.address || "",
+      type: c.type || "eceran",
+      gallon_deposit_qty: String(c.gallon_deposit_qty || 0),
+      lpg_deposit_qty: String(c.lpg_deposit_qty || 0),
+    });
+    setModalVisible(true);
+  };
+
   const handleSaveCustomer = async () => {
     if (!formData.name.trim()) {
       showToast("Nama pelanggan wajib diisi");
@@ -74,6 +101,7 @@ export default function PelangganScreen() {
     setSubmitting(true);
     try {
       const payload = {
+        id: editingId || undefined,
         name: formData.name,
         phone: formData.phone,
         address: formData.address,
@@ -87,19 +115,26 @@ export default function PelangganScreen() {
         await postApi("/customers", payload);
       }
 
-      showToast("Pelanggan berhasil disimpan!");
+      showToast(editingId ? "Pelanggan diperbarui!" : "Pelanggan disimpan!");
       setModalVisible(false);
-      setFormData({
-        name: "",
-        phone: "",
-        address: "",
-        type: "eceran",
-        gallon_deposit_qty: "0",
-        lpg_deposit_qty: "0",
-      });
       fetchCustomers();
     } catch (e: any) {
-      showToast(e?.message || "Gagal menyimpan pelanggan");
+      showToast("Gagal menyimpan pelanggan");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (id: string) => {
+    setSubmitting(true);
+    try {
+      const delApi = typeof api?.delete === "function" ? api.delete : null;
+      if (delApi) await delApi(`/customers/${id}`);
+      showToast("Pelanggan berhasil dihapus");
+      setModalVisible(false);
+      fetchCustomers();
+    } catch (e) {
+      showToast("Gagal menghapus pelanggan");
     } finally {
       setSubmitting(false);
     }
@@ -114,7 +149,7 @@ export default function PelangganScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Manajemen Pelanggan</Text>
-        <Pressable onPress={() => setModalVisible(true)} style={styles.addBtn}>
+        <Pressable onPress={openAddModal} style={styles.addBtn}>
           <Icon name="person-add" size={20} color="#fff" />
         </Pressable>
       </View>
@@ -138,48 +173,42 @@ export default function PelangganScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
-          {filteredCustomers.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Icon name="people-outline" size={40} color={colors.muted} />
-              <Text style={styles.emptyText}>Belum ada data pelanggan</Text>
-            </View>
-          ) : (
-            filteredCustomers.map((c, idx) => (
-              <View key={c.id || idx} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.custName}>{c.name}</Text>
-                    <Text style={styles.custMeta}>
-                      📞 {c.phone || "-"} | 📍 {c.address || "Tidak ada alamat"}
-                    </Text>
-                  </View>
-                  <View style={styles.typeTag}>
-                    <Text style={styles.typeTagText}>
-                      {(c.type || "Eceran").toUpperCase()}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.depositRow}>
-                  <Text style={styles.depositText}>
-                    Galon Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.gallon_deposit_qty || 0}</Text>
+          {filteredCustomers.map((c, idx) => (
+            <Pressable key={c.id || idx} style={styles.card} onPress={() => openEditModal(c)}>
+              <View style={styles.cardHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.custName}>{c.name}</Text>
+                  <Text style={styles.custMeta}>
+                    📞 {c.phone || "-"} | 📍 {c.address || "Tidak ada alamat"}
                   </Text>
-                  <Text style={styles.depositText}>
-                    Tabung LPG Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.lpg_deposit_qty || 0}</Text>
+                </View>
+                <View style={styles.typeTag}>
+                  <Text style={styles.typeTagText}>
+                    {(c.type || "Eceran").toUpperCase()}
                   </Text>
                 </View>
               </View>
-            ))
-          )}
+
+              <View style={styles.depositRow}>
+                <Text style={styles.depositText}>
+                  Galon Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.gallon_deposit_qty || 0}</Text>
+                </Text>
+                <Text style={styles.depositText}>
+                  Tabung LPG Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.lpg_deposit_qty || 0}</Text>
+                </Text>
+              </View>
+            </Pressable>
+          ))}
         </ScrollView>
       )}
 
-      {/* Modal Tambah Pelanggan */}
       <Modal visible={modalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Tambah Pelanggan Baru</Text>
+              <Text style={styles.modalTitle}>
+                {editingId ? "Edit Pelanggan" : "Tambah Pelanggan Baru"}
+              </Text>
               <Pressable onPress={() => setModalVisible(false)}>
                 <Icon name="close" size={22} color={colors.onSurface} />
               </Pressable>
@@ -257,6 +286,15 @@ export default function PelangganScreen() {
             </ScrollView>
 
             <View style={styles.modalFooter}>
+              {editingId && (
+                <Pressable
+                  style={[styles.deleteBtn, submitting && { opacity: 0.6 }]}
+                  disabled={submitting}
+                  onPress={() => handleDeleteCustomer(editingId)}
+                >
+                  <Text style={styles.deleteBtnText}>Hapus Pelanggan Ini</Text>
+                </Pressable>
+              )}
               <Pressable
                 style={[styles.saveBtn, submitting && { opacity: 0.6 }]}
                 disabled={submitting}
@@ -283,8 +321,6 @@ const useStyles = makeStyles((c) => ({
   searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: c.surfaceSecondary, borderRadius: 10, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: c.border },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 13, color: c.onSurface },
   centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyContainer: { padding: 40, alignItems: "center" },
-  emptyText: { marginTop: 8, color: c.muted, fontSize: 13 },
   card: { backgroundColor: c.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, marginBottom: 10 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
   custName: { fontSize: 15, fontWeight: "800", color: c.onSurface },
@@ -304,7 +340,9 @@ const useStyles = makeStyles((c) => ({
   typeChipActive: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
   typeChipText: { fontSize: 10, fontWeight: "700", color: c.muted },
   typeChipTextActive: { color: "#fff" },
-  modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: c.border },
+  modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: c.border, gap: 8 },
+  deleteBtn: { backgroundColor: "#e11d48", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  deleteBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
   saveBtn: { backgroundColor: c.brandPrimary, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
   saveBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 }));
