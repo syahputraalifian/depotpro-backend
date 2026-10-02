@@ -23,6 +23,7 @@ export default function PosScreen() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // State Keranjang & Pelanggan Terpilih
   const [cart, setCart] = useState<any[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -73,24 +74,38 @@ export default function PosScreen() {
     fetchData();
   }, []);
 
-  // FUNGSI MENENTUKAN HARGA BERDASARKAN TIER PELANGGAN & STOK
-  const getProductPrice = (product: any, customerTier: string) => {
+  // FUNGSI LENGKAP PENENTUAN HARGA SESUAI SKEMA BACKEND (Refill / Complete / Tier)
+  const getProductPrice = (product: any, customerTier: string = "eceran") => {
+    if (!product) return 0;
+
     const tier = (customerTier || "eceran").toLowerCase();
-    
-    // Cek apakah produk memiliki harga khusus berdasarkan tier di database
+
+    // 1. Cek Tier Prices khusus jika ada
     if (product.tier_prices && typeof product.tier_prices === "object") {
-      if (product.tier_prices[tier] !== undefined && product.tier_prices[tier] !== null) {
-        return Number(product.tier_prices[tier]);
+      const tierVal = product.tier_prices[tier] ?? product.tier_prices["eceran"];
+      if (tierVal !== undefined && tierVal !== null && Number(tierVal) > 0) {
+        return Number(tierVal);
       }
     }
-    
-    // Fallback ke harga umum / selling_price / price standar produk
-    return Number(
-      product.price ?? 
-      product.selling_price ?? 
-      product.base_price ?? 
-      0
-    );
+
+    // 2. Cek kandidat harga sesuai field asli di database MongoDB
+    const priceCandidates = [
+      product.price_refill,      // Harga Isi Ulang
+      product.selling_price,     // Harga Jual Utama
+      product.price,             // Harga Standard
+      product.price_complete,    // Harga Perdana / Lengkap
+      product.base_price,
+      product.harga_jual,
+      product.harga
+    ];
+
+    for (const val of priceCandidates) {
+      if (val !== undefined && val !== null && Number(val) > 0) {
+        return Number(val);
+      }
+    }
+
+    return 0;
   };
 
   const addToCart = (product: any) => {
@@ -105,7 +120,6 @@ export default function PosScreen() {
       const updated = [...cart];
       if (updated[existingIndex].qty < maxStock) {
         updated[existingIndex].qty += 1;
-        // Sinkronkan harga terbaru sesuai tier
         updated[existingIndex].price = activePrice;
         setCart(updated);
       } else {
@@ -407,36 +421,3 @@ const useStyles = makeStyles((c) => ({
   customerOptionName: { fontSize: 14, fontWeight: "800", color: c.onSurface },
   customerOptionSub: { fontSize: 11, color: c.muted, marginTop: 2 },
 }));
-// FUNGSI PENCARIAN HARGA UNIVERSAL (Mendeteksi semua kemungkinan nama field di DB)
-  const getProductPrice = (product: any, customerTier: string) => {
-    if (!product) return 0;
-    
-    // 1. Cek jika ada harga spesifik berdasarkan tier pelanggan
-    const tier = (customerTier || "eceran").toLowerCase();
-    if (product.tier_prices && typeof product.tier_prices === "object") {
-      if (product.tier_prices[tier] !== undefined && product.tier_prices[tier] !== null) {
-        return Number(product.tier_prices[tier]);
-      }
-    }
-
-    // 2. Cek semua kemungkinan nama properti harga di database MongoDB
-    const possiblePriceKeys = [
-      "price", 
-      "selling_price", 
-      "base_price", 
-      "retail_price", 
-      "harga", 
-      "harga_jual",
-      "hargajual",
-      "amount"
-    ];
-
-    for (const key of possiblePriceKeys) {
-      if (product[key] !== undefined && product[key] !== null && Number(product[key]) > 0) {
-        return Number(product[key]);
-      }
-    }
-
-    // Fallback terakhir jika tidak ketemu sama sekali
-    return 0;
-  };
