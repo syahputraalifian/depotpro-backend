@@ -9,9 +9,6 @@ import jwt
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# ==========================================
-# KONFIGURASI & MONGODB ATLAS INTEGRATION
-# ==========================================
 JWT_SECRET = os.getenv("JWT_SECRET", "depotpro_super_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
@@ -47,57 +44,6 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
-@app.on_event("startup")
-async def startup_event():
-    try:
-        count = await db.products.count_documents({})
-        if count == 0:
-            initial_products = [
-                {
-                    "id": "prod-default-1",
-                    "name": "Gas LPG 3 Kg",
-                    "category": "lpg",
-                    "is_returnable": True,
-                    "cost_price": 16000,
-                    "freight_cost": 1000,
-                    "depreciation_cost": 500,
-                    "price_eceran": 20000,
-                    "price_warung": 18500,
-                    "price_pangkalan": 17500,
-                    "price_korporat": 17000,
-                    "deposit_amount": 100000,
-                    "stock_filled": 50,
-                    "stock_empty": 20,
-                    "reorder_point": 10,
-                    "total_sold": 0
-                },
-                {
-                    "id": "prod-default-2",
-                    "name": "Air Galon Brand 19L",
-                    "category": "galon_brand",
-                    "is_returnable": True,
-                    "cost_price": 14000,
-                    "freight_cost": 1000,
-                    "depreciation_cost": 500,
-                    "price_eceran": 20000,
-                    "price_warung": 18000,
-                    "price_pangkalan": 17000,
-                    "price_korporat": 16500,
-                    "deposit_amount": 50000,
-                    "stock_filled": 30,
-                    "stock_empty": 15,
-                    "reorder_point": 10,
-                    "total_sold": 0
-                }
-            ]
-            await db.products.insert_many(initial_products)
-            print("🌱 [SEED] Berhasil menginisialisasi produk awal")
-    except Exception as e:
-        print(f"⚠️ [MONGO WARNING] Gagal menginisialisasi DB: {e}")
-
-# ==========================================
-# AUTH ENDPOINTS
-# ==========================================
 @app.get("/")
 @app.get("/api")
 async def root():
@@ -126,99 +72,15 @@ async def login(payload: Dict[str, Any] = Body(...)):
 
     raise HTTPException(status_code=401, detail="Email atau password salah")
 
-@app.get("/users/me")
-@app.get("/api/users/me")
-@app.get("/auth/me")
-@app.get("/api/auth/me")
-@app.get("/profile")
-@app.get("/api/profile")
-async def get_me():
-    return {"email": "owner@gasgalon.id", "name": "Pemilik Depot", "role": "owner"}
-
 # ==========================================
-# DASHBOARD & REPORTS
+# PRODUCTS (GET, POST, DELETE)
 # ==========================================
-@app.get("/dashboard")
-@app.get("/api/dashboard")
-async def get_dashboard():
-    try:
-        pipeline = [
-            {"$group": {"_id": None, "total_revenue": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
-        ]
-        agg_result = await db.transactions.aggregate(pipeline).to_list(length=1)
-        revenue = agg_result[0]["total_revenue"] if agg_result else 0
-        tx_count = agg_result[0]["count"] if agg_result else 0
-
-        recent_tx = []
-        cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1).limit(5)
-        async for doc in cursor:
-            recent_tx.append(doc)
-
-        low_stock = []
-        cursor_stock = db.products.find({"$expr": {"$lte": ["$stock_filled", "$reorder_point"]}}, {"_id": 0})
-        async for doc in cursor_stock:
-            low_stock.append(doc)
-
-        return {
-            "status": "success",
-            "revenue": revenue,
-            "transactions_count": tx_count,
-            "low_stock_count": len(low_stock),
-            "recent_transactions": recent_tx,
-            "low_stock_items": low_stock,
-            "daily_revenue": revenue,
-            "monthly_revenue": revenue,
-            "total_sales": revenue,
-            "data": []
-        }
-    except Exception as e:
-        return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
-
-@app.get("/reports")
-@app.get("/api/reports")
-@app.get("/reports/financial")
-@app.get("/api/reports/financial")
-async def get_reports():
-    try:
-        transactions = []
-        cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1)
-        async for doc in cursor:
-            transactions.append(doc)
-
-        total_income = sum(t.get("total_amount", 0) for t in transactions)
-
-        return {
-            "status": "success",
-            "daily": total_income,
-            "monthly": total_income,
-            "yearly": total_income,
-            "total_transactions": len(transactions),
-            "data": transactions
-        }
-    except Exception as e:
-        return {"daily": 0, "monthly": 0, "yearly": 0, "total_transactions": 0, "data": []}
-
-@app.delete("/reports/{tx_id}")
-@app.delete("/api/reports/{tx_id}")
-@app.delete("/transactions/{tx_id}")
-@app.delete("/api/transactions/{tx_id}")
-async def delete_transaction(tx_id: str):
-    res = await db.transactions.delete_one({"id": tx_id})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
-    return {"status": "success", "message": "Riwayat transaksi berhasil dihapus"}
-
-# ====================================================================
-# PRODUCTS
-# ====================================================================
 class ProductModel(BaseModel):
     id: Optional[str] = None
     name: str
     category: str = "lpg"
     is_returnable: bool = True
     cost_price: float = 0
-    freight_cost: float = 0
-    depreciation_cost: float = 0
     price_eceran: float = 0
     price_warung: float = 0
     price_pangkalan: float = 0
@@ -230,7 +92,7 @@ class ProductModel(BaseModel):
 
 @app.get("/products")
 @app.get("/api/products")
-async def get_products_real():
+async def get_products():
     products = []
     cursor = db.products.find({}, {"_id": 0})
     async for doc in cursor:
@@ -239,18 +101,12 @@ async def get_products_real():
 
 @app.post("/products")
 @app.post("/api/products")
-async def create_product_real(product: ProductModel):
-    new_product = product.dict()
-    if not new_product.get("id"):
-        new_product["id"] = f"prod-{uuid.uuid4().hex[:8]}"
-    new_product["total_sold"] = new_product.get("total_sold", 0)
-
-    await db.products.update_one(
-        {"id": new_product["id"]},
-        {"$set": new_product},
-        upsert=True
-    )
-    return new_product
+async def save_product(product: ProductModel):
+    p_data = product.dict()
+    if not p_data.get("id"):
+        p_data["id"] = f"prod-{uuid.uuid4().hex[:8]}"
+    await db.products.update_one({"id": p_data["id"]}, {"$set": p_data}, upsert=True)
+    return p_data
 
 @app.delete("/products/{product_id}")
 @app.delete("/api/products/{product_id}")
@@ -258,46 +114,11 @@ async def delete_product(product_id: str):
     res = await db.products.delete_one({"id": product_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    return {"status": "success", "message": "Produk berhasil dihapus"}
+    return {"status": "success", "message": "Produk terhapus dari MongoDB"}
 
-# ====================================================================
-# TRANSACTIONS
-# ====================================================================
-class TransactionItemModel(BaseModel):
-    product_id: str
-    product_name: str
-    qty: int
-    price: float
-
-class TransactionModel(BaseModel):
-    items: List[TransactionItemModel]
-    total_amount: float
-    payment_method: str = "cash"
-    customer_name: Optional[str] = "Eceran / Umum"
-
-@app.post("/transactions")
-@app.post("/api/transactions")
-async def create_transaction(tx: TransactionModel):
-    tx_data = tx.dict()
-    tx_data["id"] = f"tx-{uuid.uuid4().hex[:8]}"
-    tx_data["created_at"] = datetime.utcnow().isoformat()
-
-    await db.transactions.insert_one(tx_data)
-
-    for item in tx.items:
-        await db.products.update_one(
-            {"id": item.product_id},
-            {"$inc": {"stock_filled": -item.qty, "total_sold": item.qty}}
-        )
-
-    if "_id" in tx_data:
-        del tx_data["_id"]
-
-    return {"status": "success", "data": tx_data}
-
-# ====================================================================
-# CUSTOMERS
-# ====================================================================
+# ==========================================
+# CUSTOMERS (GET, POST, DELETE)
+# ==========================================
 class CustomerModel(BaseModel):
     id: Optional[str] = None
     name: str
@@ -318,17 +139,12 @@ async def get_customers():
 
 @app.post("/customers")
 @app.post("/api/customers")
-async def create_customer(cust: CustomerModel):
-    cust_data = cust.dict()
-    if not cust_data.get("id"):
-        cust_data["id"] = f"cust-{uuid.uuid4().hex[:8]}"
-
-    await db.customers.update_one(
-        {"id": cust_data["id"]},
-        {"$set": cust_data},
-        upsert=True
-    )
-    return {"status": "success", "data": cust_data}
+async def save_customer(cust: CustomerModel):
+    c_data = cust.dict()
+    if not c_data.get("id"):
+        c_data["id"] = f"cust-{uuid.uuid4().hex[:8]}"
+    await db.customers.update_one({"id": c_data["id"]}, {"$set": c_data}, upsert=True)
+    return c_data
 
 @app.delete("/customers/{customer_id}")
 @app.delete("/api/customers/{customer_id}")
@@ -336,97 +152,31 @@ async def delete_customer(customer_id: str):
     res = await db.customers.delete_one({"id": customer_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
-    return {"status": "success", "message": "Pelanggan berhasil dihapus"}
+    return {"status": "success", "message": "Pelanggan terhapus dari MongoDB"}
 
-# ====================================================================
-# DRIVERS & DELIVERIES
-# ====================================================================
-class DriverModel(BaseModel):
-    id: Optional[str] = None
-    name: str
-    phone: str
-    status: str = "active"
-
-@app.get("/drivers")
-@app.get("/api/drivers")
-async def get_drivers():
-    drivers = []
-    cursor = db.drivers.find({}, {"_id": 0})
+# ==========================================
+# REPORTS / TRANSACTIONS (GET, POST, DELETE)
+# ==========================================
+@app.get("/reports")
+@app.get("/api/reports")
+async def get_reports():
+    transactions = []
+    cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1)
     async for doc in cursor:
-        drivers.append(doc)
-    return drivers
+        transactions.append(doc)
+    total_income = sum(t.get("total_amount", 0) for t in transactions)
+    return {"status": "success", "daily": total_income, "total_transactions": len(transactions), "data": transactions}
 
-@app.post("/drivers")
-@app.post("/api/drivers")
-async def create_driver(driver: DriverModel):
-    data = driver.dict()
-    if not data.get("id"):
-        data["id"] = f"driver-{uuid.uuid4().hex[:8]}"
-    await db.drivers.update_one({"id": data["id"]}, {"$set": data}, upsert=True)
-    return {"status": "success", "data": data}
+@app.delete("/reports/{tx_id}")
+@app.delete("/api/reports/{tx_id}")
+@app.delete("/transactions/{tx_id}")
+@app.delete("/api/transactions/{tx_id}")
+async def delete_transaction(tx_id: str):
+    res = await db.transactions.delete_one({"id": tx_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    return {"status": "success", "message": "Transaksi terhapus dari MongoDB"}
 
-@app.delete("/drivers/{driver_id}")
-@app.delete("/api/drivers/{driver_id}")
-async def delete_driver(driver_id: str):
-    await db.drivers.delete_one({"id": driver_id})
-    return {"status": "success", "message": "Driver berhasil dihapus"}
-
-class DeliveryOrderModel(BaseModel):
-    driver_name: str
-    customer_id: str
-    customer_name: str
-    address: str
-    items: List[TransactionItemModel]
-    total_amount: float
-    status: str = "pending"
-
-@app.get("/deliveries")
-@app.get("/api/deliveries")
-async def get_deliveries():
-    deliveries = []
-    cursor = db.deliveries.find({}, {"_id": 0}).sort("created_at", -1)
-    async for doc in cursor:
-        deliveries.append(doc)
-    return deliveries
-
-@app.post("/deliveries")
-@app.post("/api/deliveries")
-async def create_delivery(delivery: DeliveryOrderModel):
-    deliv_data = delivery.dict()
-    deliv_data["id"] = f"deliv-{uuid.uuid4().hex[:8]}"
-    deliv_data["created_at"] = datetime.utcnow().isoformat()
-
-    await db.deliveries.insert_one(deliv_data)
-    if "_id" in deliv_data:
-        del deliv_data["_id"]
-
-    return {"status": "success", "data": deliv_data}
-
-@app.post("/deliveries/{delivery_id}/status")
-@app.put("/deliveries/{delivery_id}/status")
-async def update_delivery_status(delivery_id: str, payload: Dict[str, Any] = Body(...)):
-    new_status = payload.get("status", "completed")
-    res = await db.deliveries.find_one_and_update(
-        {"id": delivery_id},
-        {"$set": {"status": new_status}},
-        return_document=True
-    )
-    if new_status == "completed" and res:
-        for item in res.get("items", []):
-            await db.products.update_one(
-                {"id": item.get("product_id")},
-                {"$inc": {"stock_filled": -item.get("qty", 0), "total_sold": item.get("qty", 0)}}
-            )
-    return {"status": "success", "message": f"Status updated to {new_status}"}
-
-# ====================================================================
-# CATCH-ALL WILDCARD
-# ====================================================================
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
-    return {
-        "status": "success",
-        "message": f"Intercepted: {full_path}",
-        "data": [],
-        "result": []
-    }
+    return {"status": "success", "message": f"Intercepted: {full_path}", "data": []}
