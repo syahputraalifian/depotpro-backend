@@ -174,60 +174,34 @@ export default function StokScreen() {
     }
   };
 
-  // HANDLER HAPUS DENGAN DOUBLE-TRY (DELETE + POST FALLBACK)
-  const handleDelete = (target?: any) => {
-    const idToDelete =
-      typeof target === "string"
-        ? target
-        : target?.id || target?._id || editingId;
+  // FUNGSI DELETE BERDASARKAN KODE REFERENSI ANDA
+  const handleDeleteProduct = async (target?: any) => {
+    const id = typeof target === "string" ? target : target?.id || target?._id || editingId;
+    if (!id) return;
 
-    if (!idToDelete || idToDelete === "undefined") {
-      Alert.alert("Gagal", "ID Produk tidak ditemukan");
-      return;
-    }
-
-    Alert.alert("Konfirmasi Hapus", "Apakah Anda yakin ingin menghapus produk ini dari database?", [
-      { text: "Batal", style: "cancel" },
-      {
-        text: "HAPUS",
-        style: "destructive",
-        onPress: async () => {
-          setSubmitting(true);
-          try {
-            let success = false;
-            
-            // Try 1: HTTP DELETE
+    Alert.alert(
+      "Konfirmasi Hapus",
+      "Apakah Anda yakin ingin menghapus data produk ini?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: async () => {
             try {
-              const delApi = typeof api?.delete === "function" ? api.delete : null;
-              if (delApi) {
-                const res = await delApi(`/products/${idToDelete}`);
-                if (res) success = true;
+              const response = await api.delete(`/products/${id}`);
+              if (response) {
+                showToast("Data produk berhasil dihapus");
+                setModalVisible(false);
+                fetchProducts();
               }
-            } catch (err) {
-              // Try 2: Fallback ke HTTP POST /delete jika CORS/method diblokir
-              const postApi = typeof api?.post === "function" ? api.post : null;
-              if (postApi) {
-                const resPost = await postApi("/products/delete", { id: idToDelete });
-                if (resPost) success = true;
-              }
+            } catch (e: any) {
+              showToast(e?.message || "Gagal menghapus data produk");
             }
-
-            if (success) {
-              setProducts((prev) => prev.filter((p) => p.id !== idToDelete && p._id !== idToDelete));
-              setModalVisible(false);
-              showToast("Produk terhapus dari MongoDB");
-              fetchProducts();
-            } else {
-              Alert.alert("Gagal", "Tidak dapat menghapus produk dari server");
-            }
-          } catch (e: any) {
-            Alert.alert("Error", e?.message || "Gagal menghapus produk");
-          } finally {
-            setSubmitting(false);
-          }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const filteredProducts = useMemo(() => {
@@ -305,7 +279,7 @@ export default function StokScreen() {
                       Kategori: {(p.category || "LPG").toUpperCase()}
                     </Text>
                   </View>
-                  <Pressable onPress={() => handleDelete(p)} style={{ padding: 6 }}>
+                  <Pressable onPress={() => handleDeleteProduct(p)} style={{ padding: 6 }}>
                     <Icon name="trash-outline" size={22} color="#e11d48" />
                   </Pressable>
                 </View>
@@ -409,7 +383,7 @@ export default function StokScreen() {
                 <Pressable
                   style={[styles.deleteBtn, submitting && { opacity: 0.6 }]}
                   disabled={submitting}
-                  onPress={() => handleDelete(editingId)}
+                  onPress={() => handleDeleteProduct(editingId)}
                 >
                   <Text style={styles.deleteBtnText}>Hapus Produk Ini</Text>
                 </Pressable>

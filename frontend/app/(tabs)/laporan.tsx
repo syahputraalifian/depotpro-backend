@@ -78,56 +78,33 @@ export default function LaporanScreen() {
     fetchReports();
   }, []);
 
-  const handleDeleteTx = (target?: any) => {
-    const txId =
-      typeof target === "string"
-        ? target
-        : target?.id || target?._id;
+  // FUNGSI DELETE LAPORAN BERDASARKAN KODE REFERENSI ANDA
+  const handleDeleteFinance = async (target?: any) => {
+    const id = typeof target === "string" ? target : target?.id || target?._id;
+    if (!id) return;
 
-    if (!txId || txId === "undefined") {
-      Alert.alert("Gagal", "ID Transaksi tidak ditemukan");
-      return;
-    }
-
-    Alert.alert("Konfirmasi Hapus", "Hapus riwayat transaksi ini dari database?", [
-      { text: "Batal", style: "cancel" },
-      {
-        text: "HAPUS",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            let success = false;
-            
+    Alert.alert(
+      "Konfirmasi Hapus",
+      "Apakah Anda yakin ingin menghapus data laporan ini?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: async () => {
             try {
-              const delApi = typeof api?.delete === "function" ? api.delete : null;
-              if (delApi) {
-                const res = await delApi(`/reports/${txId}`);
-                if (res) success = true;
+              const response = await api.delete(`/reports/${id}`);
+              if (response) {
+                showToast("Data laporan berhasil dihapus");
+                fetchReports();
               }
-            } catch (err) {
-              const postApi = typeof api?.post === "function" ? api.post : null;
-              if (postApi) {
-                const resPost = await postApi("/reports/delete", { id: txId });
-                if (resPost) success = true;
-              }
+            } catch (e: any) {
+              showToast(e?.message || "Gagal menghapus data laporan");
             }
-
-            if (success) {
-              setReportData((prev: any) => ({
-                ...prev,
-                data: (prev.data || []).filter((item: any) => item.id !== txId && item._id !== txId),
-              }));
-              showToast("Riwayat transaksi terhapus");
-              fetchReports();
-            } else {
-              Alert.alert("Gagal", "Tidak dapat menghapus transaksi dari server");
-            }
-          } catch (e: any) {
-            Alert.alert("Error", e?.message || "Gagal menghapus transaksi");
-          }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const transactions = Array.isArray(reportData?.data) ? reportData.data : [];
@@ -209,7 +186,7 @@ export default function LaporanScreen() {
                 </Text>
               </View>
               <Text style={styles.txAmount}>{safeRupiah(tx?.total_amount || 0)}</Text>
-              <Pressable onPress={() => handleDeleteTx(tx)} style={{ paddingLeft: 12 }}>
+              <Pressable onPress={() => handleDeleteFinance(tx)} style={{ paddingLeft: 12 }}>
                 <Icon name="trash-outline" size={22} color="#e11d48" />
               </Pressable>
             </View>
