@@ -112,7 +112,7 @@ export default function StokScreen() {
   };
 
   const openEditModal = (p: any) => {
-    const pId = typeof p === "string" ? p : p?.id || p?._id;
+    const pId = typeof p === "string" ? p : p?._id || p?.id;
     setEditingId(pId);
     setFormData({
       name: p.name || "",
@@ -174,9 +174,9 @@ export default function StokScreen() {
     }
   };
 
-  // FUNGSI DELETE BERDASARKAN KODE REFERENSI ANDA
+  // FUNGSI DELETE PRESISI MENGIKUTI DOKUMEN MONGO ANDA
   const handleDeleteProduct = async (target?: any) => {
-    const id = typeof target === "string" ? target : target?.id || target?._id || editingId;
+    const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
     if (!id) return;
 
     Alert.alert(
@@ -196,7 +196,7 @@ export default function StokScreen() {
                 fetchProducts();
               }
             } catch (e: any) {
-              showToast(e?.message || "Gagal menghapus data produk");
+              showToast(e?.message || e?.detail || "Gagal menghapus data produk");
             }
           },
         },
@@ -268,7 +268,7 @@ export default function StokScreen() {
 
             return (
               <Pressable
-                key={p.id || p._id || p.name}
+                key={p._id || p.id || p.name}
                 style={[styles.stockCard, isLow && styles.stockCardWarning]}
                 onPress={() => openEditModal(p)}
               >

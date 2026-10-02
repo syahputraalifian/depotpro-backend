@@ -48,7 +48,7 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
 # ==========================================
-# FUNGSI HAPUS MONGODB (SESUAI DENGAN REF CODE)
+# FUNGSI HAPUS MONGODB PRESISI
 # ==========================================
 async def delete_document_by_id(collection, item_id: str) -> bool:
     if not item_id or item_id == "undefined":
@@ -56,19 +56,20 @@ async def delete_document_by_id(collection, item_id: str) -> bool:
     
     clean_id = str(item_id).strip()
     
-    # Kueri fleksibel: mendukung field 'id' UUID, '_id' string, dan BSON '_id' ObjectId
-    query_conditions = [
+    # Pencocokan ganda: field 'id' (UUID string) atau '_id' (String)
+    or_conditions = [
         {"id": clean_id},
         {"_id": clean_id}
     ]
     
-    if ObjectId.is_valid(clean_id):
+    # Hanya konversi ke ObjectId JIKA string tepat 24-karakter hex
+    if len(clean_id) == 24 and ObjectId.is_valid(clean_id):
         try:
-            query_conditions.append({"_id": ObjectId(clean_id)})
-        except errors.InvalidId:
+            or_conditions.append({"_id": ObjectId(clean_id)})
+        except Exception:
             pass
 
-    result = await collection.delete_one({"$or": query_conditions})
+    result = await collection.delete_one({"$or": or_conditions})
     return result.deleted_count > 0
 
 # ==========================================
@@ -112,13 +113,21 @@ async def get_dashboard():
         tx_count = agg_result[0]["count"] if agg_result else 0
 
         recent_tx = []
-        cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1).limit(5)
+        cursor = db.transactions.find({}).sort("created_at", -1).limit(5)
         async for doc in cursor:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+                if not doc.get("id"):
+                    doc["id"] = doc["_id"]
             recent_tx.append(doc)
 
         low_stock = []
-        cursor_stock = db.products.find({"$expr": {"$lte": ["$stock_filled", "$reorder_point"]}}, {"_id": 0})
+        cursor_stock = db.products.find({"$expr": {"$lte": ["$stock_filled", "$reorder_point"]}})
         async for doc in cursor_stock:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+                if not doc.get("id"):
+                    doc["id"] = doc["_id"]
             low_stock.append(doc)
 
         return {
@@ -137,7 +146,7 @@ async def get_dashboard():
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
 # ==========================================
-# ENDPOINT PRODUK (DELETE)
+# ENDPOINT PRODUK (CRUD & DELETE)
 # ==========================================
 @app.get("/products")
 @app.get("/api/products")
@@ -173,7 +182,7 @@ async def delete_product(id: str):
     return {"success": True, "status": "success", "message": "Data produk berhasil dihapus"}
 
 # ==========================================
-# ENDPOINT TRANSAKSI / LAPORAN / FINANCE (DELETE)
+# ENDPOINT TRANSAKSI / LAPORAN / FINANCE
 # ==========================================
 @app.get("/reports")
 @app.get("/api/reports")

@@ -78,9 +78,9 @@ export default function LaporanScreen() {
     fetchReports();
   }, []);
 
-  // FUNGSI DELETE LAPORAN BERDASARKAN KODE REFERENSI ANDA
+  // FUNGSI DELETE LAPORAN PRESISI
   const handleDeleteFinance = async (target?: any) => {
-    const id = typeof target === "string" ? target : target?.id || target?._id;
+    const id = typeof target === "string" ? target : target?._id || target?.id;
     if (!id) return;
 
     Alert.alert(
@@ -99,7 +99,7 @@ export default function LaporanScreen() {
                 fetchReports();
               }
             } catch (e: any) {
-              showToast(e?.message || "Gagal menghapus data laporan");
+              showToast(e?.message || e?.detail || "Gagal menghapus data laporan");
             }
           },
         },
@@ -172,7 +172,7 @@ export default function LaporanScreen() {
 
           <Text style={styles.sectionTitle}>Riwayat Transaksi Penjualan</Text>
           {transactions.map((tx: any, idx: number) => (
-            <View key={tx?.id || tx?._id || idx} style={styles.txCard}>
+            <View key={tx?._id || tx?.id || idx} style={styles.txCard}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.txCustomer}>{tx?.customer_name || "Pelanggan Umum"}</Text>
                 <Text style={styles.txMeta}>
