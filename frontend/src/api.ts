@@ -1,10 +1,8 @@
 import { storage } from "@/src/utils/storage";
 
-// Tambahkan Fallback URL agar tidak pernah bernilai 'undefined'
 const FALLBACK_URL = "https://depotpro-backend.onrender.com";
 const rawBase = process.env.EXPO_PUBLIC_BACKEND_URL || process.env.EXPO_PUBLIC_API_URL || FALLBACK_URL;
 
-// Bersihkan trailing slash jika ada
 const BASE = rawBase.replace(/\/+$/, "");
 
 export const TOKEN_KEY = "gg_access_token";
@@ -65,4 +63,8 @@ export const api = {
     });
     return handle(res);
   },
+  // ALIAS AGAR 'api.delete' BERJALAN 100% SAMA DENGAN 'api.del'
+  async delete(path: string) {
+    return this.del(path);
+  }
 };
