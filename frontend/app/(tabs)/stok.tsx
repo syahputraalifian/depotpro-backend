@@ -174,31 +174,25 @@ export default function StokScreen() {
     }
   };
 
-  // PEMANGGILAN HAPUS DENGAN STRING UUID PRESISI
-  const handleDelete = (targetParam?: any) => {
-    let idToDelete = "";
-    if (typeof targetParam === "string") {
-      idToDelete = targetParam;
-    } else if (targetParam && typeof targetParam === "object") {
-      idToDelete = targetParam.id || targetParam._id;
-    } else {
-      idToDelete = editingId || "";
-    }
+  const handleDelete = (target?: any) => {
+    const idToDelete =
+      typeof target === "string"
+        ? target
+        : target?.id || target?._id || editingId;
 
     if (!idToDelete) {
-      Alert.alert("Error", "ID Produk tidak valid");
+      Alert.alert("Error", "ID Produk tidak ditemukan");
       return;
     }
 
-    Alert.alert("Konfirmasi Hapus", "Apakah Anda yakin ingin menghapus produk ini dari database?", [
+    Alert.alert("Konfirmasi Hapus", "Yakin ingin menghapus produk ini dari database?", [
       { text: "Batal", style: "cancel" },
       {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
           setSubmitting(true);
-          // Hapus instan dari UI lokal
-          setProducts((prev) => prev.filter((p) => (p.id || p._id) !== idToDelete));
+          setProducts((prev) => prev.filter((item) => (item.id || item._id) !== idToDelete));
           setModalVisible(false);
 
           try {
@@ -206,10 +200,10 @@ export default function StokScreen() {
             if (delApi) {
               await delApi(`/products/${idToDelete}`);
             }
-            showToast("Produk terhapus dari MongoDB");
+            showToast("Produk berhasil dihapus");
             fetchProducts();
           } catch (e: any) {
-            console.log("Error deleting product:", e);
+            console.log("Error delete product:", e);
           } finally {
             setSubmitting(false);
           }
@@ -293,7 +287,7 @@ export default function StokScreen() {
                       Kategori: {(p.category || "LPG").toUpperCase()}
                     </Text>
                   </View>
-                  <Pressable onPress={() => handleDelete(p)} style={{ padding: 6 }}>
+                  <Pressable onPress={() => handleDelete(p.id || p)} style={{ padding: 6 }}>
                     <Icon name="trash-outline" size={22} color="#e11d48" />
                   </Pressable>
                 </View>

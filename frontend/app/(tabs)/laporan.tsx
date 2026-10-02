@@ -78,14 +78,11 @@ export default function LaporanScreen() {
     fetchReports();
   }, []);
 
-  // PEMANGGILAN HAPUS TRANSAKSI LAPORAN PRESISI
-  const handleDeleteTx = (targetParam: any) => {
-    let txId = "";
-    if (typeof targetParam === "string") {
-      txId = targetParam;
-    } else if (targetParam && typeof targetParam === "object") {
-      txId = targetParam.id || targetParam._id;
-    }
+  const handleDeleteTx = (target?: any) => {
+    const txId =
+      typeof target === "string"
+        ? target
+        : target?.id || target?._id;
 
     if (!txId) {
       Alert.alert("Error", "ID Transaksi tidak ditemukan");
@@ -98,7 +95,6 @@ export default function LaporanScreen() {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
-          // Hapus instan dari UI lokal
           setReportData((prev: any) => ({
             ...prev,
             data: (prev.data || []).filter((item: any) => (item.id || item._id) !== txId),
@@ -111,7 +107,7 @@ export default function LaporanScreen() {
             }
             showToast("Riwayat transaksi terhapus");
             fetchReports();
-          } catch (e) {
+          } catch (e: any) {
             console.log("Error delete tx:", e);
           }
         },
@@ -198,7 +194,7 @@ export default function LaporanScreen() {
                 </Text>
               </View>
               <Text style={styles.txAmount}>{safeRupiah(tx?.total_amount || 0)}</Text>
-              <Pressable onPress={() => handleDeleteTx(tx)} style={{ paddingLeft: 12 }}>
+              <Pressable onPress={() => handleDeleteTx(tx.id || tx)} style={{ paddingLeft: 12 }}>
                 <Icon name="trash-outline" size={22} color="#e11d48" />
               </Pressable>
             </View>
