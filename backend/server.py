@@ -10,14 +10,17 @@ from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ==========================================
-# KONFIGURASI & MONGODB INTEGRATION
+# KONFIGURASI & MONGODB ATLAS INTEGRATION
 # ==========================================
 JWT_SECRET = os.getenv("JWT_SECRET", "depotpro_super_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "depotpro_db")
+# Connection String MongoDB Atlas & Database Name: gasgalon_erp
+ATLAS_MONGO_URI = "mongodb+srv://syahputraalifian_db_user:t5RklJ9LCVT6HFcy@cluster0.il9x6dt.mongodb.net/gasgalon_erp?retryWrites=true&w=majority"
+
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URL") or ATLAS_MONGO_URI
+DB_NAME = os.getenv("DB_NAME", "gasgalon_erp")
 
 client = AsyncIOMotorClient(MONGO_URI)
 db = client[DB_NAME]
@@ -90,7 +93,9 @@ async def startup_event():
                 }
             ]
             await db.products.insert_many(initial_products)
-            print("🌱 [SEED] Berhasil menginisialisasi produk awal ke MongoDB Atlas")
+            print("🌱 [SEED] Berhasil menginisialisasi produk awal ke MongoDB Atlas (gasgalon_erp)")
+        else:
+            print(f"✅ [MONGO CONNECTED] Terhubung ke gasgalon_erp ({count} produk tersedia)")
     except Exception as e:
         print(f"⚠️ [MONGO WARNING] Gagal menginisialisasi DB: {e}")
 
