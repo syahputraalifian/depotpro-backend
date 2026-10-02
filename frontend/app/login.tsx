@@ -2,9 +2,13 @@ import React, { useState } from "react";
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Icon from "@react-native-vector-icons/ionicons";
+import { makeStyles, useTheme } from "@/src/theme";
 import { api } from "@/src/api";
 
 export default function LoginScreen() {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -14,7 +18,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert("Error", "Email dan Password wajib diisi!");
+      Alert.alert("Peringatan", "Email dan Password wajib diisi");
       return;
     }
 
@@ -24,47 +28,69 @@ export default function LoginScreen() {
       if (res?.access_token) {
         router.replace("/(tabs)");
       } else {
-        Alert.alert("Gagal Login", "Email atau Password Salah");
+        Alert.alert("Gagal Login", "Email atau Password salah");
       }
     } catch (e: any) {
-      Alert.alert("Gagal Login", e?.message || "Email atau password tidak valid");
+      Alert.alert("Gagal Login", e?.message || "Kredensial tidak valid");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={{ flex: 1, padding: 24, justifyContent: "center", backgroundColor: "#fff", paddingTop: insets.top }}>
-      <Text style={{ fontSize: 26, fontWeight: "800", color: "#0284c7", marginBottom: 6, textAlign: "center" }}>
-        DepotPro ERP
-      </Text>
-      <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 30, textAlign: "center" }}>
-        Masuk ke Sistem Manajemen Gas & Galon
-      </Text>
+    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.card}>
+        <View style={styles.iconCircle}>
+          <Icon name="water" size={36} color="#fff" />
+        </View>
 
-      <Text style={{ fontSize: 13, fontWeight: "700", marginBottom: 6 }}>Email / Username</Text>
-      <TextInput
-        style={{ borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 10, padding: 12, marginBottom: 16 }}
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-      />
+        <Text style={styles.title}>DepotPro ERP</Text>
+        <Text style={styles.subtitle}>Sistem Kelola Depot Air & Gas LPG</Text>
 
-      <Text style={{ fontSize: 13, fontWeight: "700", marginBottom: 6 }}>Password</Text>
-      <TextInput
-        style={{ borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 10, padding: 12, marginBottom: 24 }}
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
+        <Text style={styles.label}>Email / Username</Text>
+        <TextInput
+          style={styles.input}
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          placeholder="email@gasgalon.id"
+          placeholderTextColor={colors.muted}
+        />
 
-      <Pressable
-        style={{ backgroundColor: "#0284c7", paddingVertical: 14, borderRadius: 10, alignItems: "center" }}
-        disabled={loading}
-        onPress={handleLogin}
-      >
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>MASUK SEKARANG</Text>}
-      </Pressable>
+        <Text style={styles.label}>Password</Text>
+        <TextInput
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          placeholder="••••••••"
+          placeholderTextColor={colors.muted}
+        />
+
+        <Pressable
+          style={[styles.btn, loading && { opacity: 0.6 }]}
+          disabled={loading}
+          onPress={handleLogin}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.btnText}>MASUK</Text>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
+
+const useStyles = makeStyles((c) => ({
+  root: { flex: 1, backgroundColor: c.surface, justifyContent: "center", padding: 20 },
+  card: { backgroundColor: c.surface, borderRadius: 16, padding: 24, borderWidth: 1, borderColor: c.border },
+  iconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: c.brandPrimary, justifyContent: "center", alignItems: "center", alignSelf: "center", marginBottom: 16 },
+  title: { fontSize: 24, fontWeight: "800", color: c.onSurface, textAlign: "center" },
+  subtitle: { fontSize: 13, color: c.muted, textAlign: "center", marginBottom: 24, marginTop: 4 },
+  label: { fontSize: 12, fontWeight: "700", color: c.onSurface, marginBottom: 6, marginTop: 10 },
+  input: { height: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 12, color: c.onSurface, backgroundColor: c.surfaceSecondary },
+  btn: { backgroundColor: c.brandPrimary, paddingVertical: 14, borderRadius: 12, alignItems: "center", marginTop: 24 },
+  btnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
+}));
