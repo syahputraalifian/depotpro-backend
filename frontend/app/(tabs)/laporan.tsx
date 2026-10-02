@@ -85,7 +85,7 @@ export default function LaporanScreen() {
         : target?.id || target?._id;
 
     if (!txId || txId === "undefined") {
-      Alert.alert("Gagal", "ID Transaksi tidak valid atau tidak ditemukan");
+      Alert.alert("Gagal", "ID Transaksi tidak ditemukan");
       return;
     }
 
@@ -96,17 +96,31 @@ export default function LaporanScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            const delApi = typeof api?.delete === "function" ? api.delete : null;
-            if (delApi) {
-              const res = await delApi(`/reports/${txId}`);
-              if (res) {
-                setReportData((prev: any) => ({
-                  ...prev,
-                  data: (prev.data || []).filter((item: any) => item.id !== txId && item._id !== txId),
-                }));
-                showToast("Riwayat transaksi terhapus");
-                fetchReports();
+            let success = false;
+            
+            try {
+              const delApi = typeof api?.delete === "function" ? api.delete : null;
+              if (delApi) {
+                const res = await delApi(`/reports/${txId}`);
+                if (res) success = true;
               }
+            } catch (err) {
+              const postApi = typeof api?.post === "function" ? api.post : null;
+              if (postApi) {
+                const resPost = await postApi("/reports/delete", { id: txId });
+                if (resPost) success = true;
+              }
+            }
+
+            if (success) {
+              setReportData((prev: any) => ({
+                ...prev,
+                data: (prev.data || []).filter((item: any) => item.id !== txId && item._id !== txId),
+              }));
+              showToast("Riwayat transaksi terhapus");
+              fetchReports();
+            } else {
+              Alert.alert("Gagal", "Tidak dapat menghapus transaksi dari server");
             }
           } catch (e: any) {
             Alert.alert("Error", e?.message || "Gagal menghapus transaksi");

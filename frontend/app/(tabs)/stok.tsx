@@ -174,6 +174,7 @@ export default function StokScreen() {
     }
   };
 
+  // HANDLER HAPUS DENGAN DOUBLE-TRY (DELETE + POST FALLBACK)
   const handleDelete = (target?: any) => {
     const idToDelete =
       typeof target === "string"
@@ -181,11 +182,11 @@ export default function StokScreen() {
         : target?.id || target?._id || editingId;
 
     if (!idToDelete || idToDelete === "undefined") {
-      Alert.alert("Gagal", "ID Produk tidak valid atau tidak ditemukan");
+      Alert.alert("Gagal", "ID Produk tidak ditemukan");
       return;
     }
 
-    Alert.alert("Konfirmasi Hapus", "Apakah Anda yakin ingin menghapus produk ini?", [
+    Alert.alert("Konfirmasi Hapus", "Apakah Anda yakin ingin menghapus produk ini dari database?", [
       { text: "Batal", style: "cancel" },
       {
         text: "HAPUS",
@@ -193,15 +194,31 @@ export default function StokScreen() {
         onPress: async () => {
           setSubmitting(true);
           try {
-            const delApi = typeof api?.delete === "function" ? api.delete : null;
-            if (delApi) {
-              const res = await delApi(`/products/${idToDelete}`);
-              if (res) {
-                setProducts((prev) => prev.filter((p) => p.id !== idToDelete && p._id !== idToDelete));
-                setModalVisible(false);
-                showToast("Produk berhasil dihapus");
-                fetchProducts();
+            let success = false;
+            
+            // Try 1: HTTP DELETE
+            try {
+              const delApi = typeof api?.delete === "function" ? api.delete : null;
+              if (delApi) {
+                const res = await delApi(`/products/${idToDelete}`);
+                if (res) success = true;
               }
+            } catch (err) {
+              // Try 2: Fallback ke HTTP POST /delete jika CORS/method diblokir
+              const postApi = typeof api?.post === "function" ? api.post : null;
+              if (postApi) {
+                const resPost = await postApi("/products/delete", { id: idToDelete });
+                if (resPost) success = true;
+              }
+            }
+
+            if (success) {
+              setProducts((prev) => prev.filter((p) => p.id !== idToDelete && p._id !== idToDelete));
+              setModalVisible(false);
+              showToast("Produk terhapus dari MongoDB");
+              fetchProducts();
+            } else {
+              Alert.alert("Gagal", "Tidak dapat menghapus produk dari server");
             }
           } catch (e: any) {
             Alert.alert("Error", e?.message || "Gagal menghapus produk");

@@ -7,7 +7,6 @@ from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, Body, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
-from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ==========================================
@@ -49,19 +48,13 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
 # ==========================================
-# FUNGSIONALITAS UTAMA: VALIDASI & EKSEKUSI HAPUS MONGODB
+# EKSEKUSI HAPUS REAL MONGODB (OBJECTID & STRING ID)
 # ==========================================
 async def execute_mongo_delete(collection, item_id: str) -> bool:
-    """
-    Fungsi penanganan hapus presisi:
-    1. Memeriksa validitas ID.
-    2. Menyiapkan kueri pencocokan ganda (field 'id' string, '_id' string, dan BSON '_id' ObjectId).
-    3. Mengembalikan status sukses jika dokumen terhapus dari MongoDB Atlas.
-    """
-    if not item_id or not isinstance(item_id, str):
+    if not item_id or item_id == "undefined":
         return False
     
-    clean_id = item_id.strip()
+    clean_id = str(item_id).strip()
     
     or_conditions = [
         {"id": clean_id},
@@ -143,7 +136,7 @@ async def get_dashboard():
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
 # ==========================================
-# ENDPOINT PRODUK (CRUD & DELETE)
+# ENDPOINT PRODUK (DELETE & POST-DELETE)
 # ==========================================
 @app.get("/products")
 @app.get("/api/products")
@@ -168,18 +161,21 @@ async def create_product(payload: Dict[str, Any] = Body(...)):
 
 @app.delete("/products/{product_id}")
 @app.delete("/api/products/{product_id}")
-async def delete_product(product_id: str):
-    if not product_id or product_id == "undefined":
+@app.post("/products/delete")
+@app.post("/api/products/delete")
+async def delete_product(product_id: Optional[str] = None, payload: Dict[str, Any] = Body(None)):
+    target_id = product_id or (payload.get("id") if payload else None) or (payload.get("product_id") if payload else None)
+    if not target_id or target_id == "undefined":
         raise HTTPException(status_code=400, detail="ID produk tidak valid atau kosong")
     
-    is_deleted = await execute_mongo_delete(db.products, product_id)
+    is_deleted = await execute_mongo_delete(db.products, str(target_id))
     if is_deleted:
-        return {"status": "success", "message": f"Produk dengan ID {product_id} berhasil dihapus"}
+        return {"status": "success", "message": f"Produk berhasil dihapus"}
     
     raise HTTPException(status_code=404, detail="Produk tidak ditemukan di MongoDB Atlas")
 
 # ==========================================
-# ENDPOINT TRANSAKSI & LAPORAN
+# ENDPOINT TRANSAKSI / LAPORAN
 # ==========================================
 @app.get("/reports")
 @app.get("/api/reports")
@@ -214,13 +210,16 @@ async def create_transaction(payload: Dict[str, Any] = Body(...)):
 @app.delete("/api/reports/{tx_id}")
 @app.delete("/transactions/{tx_id}")
 @app.delete("/api/transactions/{tx_id}")
-async def delete_transaction(tx_id: str):
-    if not tx_id or tx_id == "undefined":
+@app.post("/reports/delete")
+@app.post("/api/reports/delete")
+async def delete_transaction(tx_id: Optional[str] = None, payload: Dict[str, Any] = Body(None)):
+    target_id = tx_id or (payload.get("id") if payload else None) or (payload.get("tx_id") if payload else None)
+    if not target_id or target_id == "undefined":
         raise HTTPException(status_code=400, detail="ID transaksi tidak valid atau kosong")
         
-    is_deleted = await execute_mongo_delete(db.transactions, tx_id)
+    is_deleted = await execute_mongo_delete(db.transactions, str(target_id))
     if is_deleted:
-        return {"status": "success", "message": f"Transaksi dengan ID {tx_id} berhasil dihapus"}
+        return {"status": "success", "message": f"Transaksi berhasil dihapus"}
     
     raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan di MongoDB Atlas")
 
@@ -242,9 +241,12 @@ async def get_customers():
 
 @app.delete("/customers/{customer_id}")
 @app.delete("/api/customers/{customer_id}")
-async def delete_customer(customer_id: str):
-    if await execute_mongo_delete(db.customers, customer_id):
-        return {"status": "success", "message": "Pelanggan berhasil dihapus"}
+@app.post("/customers/delete")
+@app.post("/api/customers/delete")
+async def delete_customer(customer_id: Optional[str] = None, payload: Dict[str, Any] = Body(None)):
+    target_id = customer_id or (payload.get("id") if payload else None)
+    if await execute_mongo_delete(db.customers, str(target_id)):
+        return {"status": "success", "message": "Pelanggan terhapus"}
     raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
 
 @app.get("/drivers")
@@ -262,11 +264,15 @@ async def get_drivers():
 
 @app.delete("/drivers/{driver_id}")
 @app.delete("/api/drivers/{driver_id}")
-async def delete_driver(driver_id: str):
-    if await execute_mongo_delete(db.drivers, driver_id):
-        return {"status": "success", "message": "Driver berhasil dihapus"}
+@app.post("/drivers/delete")
+@app.post("/api/drivers/delete")
+async def delete_driver(driver_id: Optional[str] = None, payload: Dict[str, Any] = Body(None)):
+    target_id = driver_id or (payload.get("id") if payload else None)
+    if await execute_mongo_delete(db.drivers, str(target_id)):
+        return {"status": "success", "message": "Driver terhapus"}
     raise HTTPException(status_code=404, detail="Driver tidak ditemukan")
 
+# PENTING: CATCH ALL SEKARANG MENGEMBALIKAN HTTP 404 NOT FOUND (Bukan fake success 200 OK)
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
-    return {"status": "success", "message": f"Intercepted: {full_path}", "data": []}
+    raise HTTPException(status_code=404, detail=f"Rute API /{full_path} tidak ditemukan")
