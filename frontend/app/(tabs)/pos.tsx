@@ -74,20 +74,37 @@ export default function PosScreen() {
     fetchData();
   }, []);
 
+  // FUNGSI MEMBACA HARGA SESUAI DATABASE MONGODB (price_eceran, price_warung, dll)
+  const getProductPrice = (p: any, tier: string = "eceran") => {
+    if (!p) return 0;
+    const t = (tier || "eceran").toLowerCase();
+
+    if (t === "pangkalan" && p.price_pangkalan) return p.price_pangkalan;
+    if (t === "warung" && p.price_warung) return p.price_warung;
+    if (t === "korporat" && p.price_korporat) return p.price_korporat;
+    if (p.price_eceran) return p.price_eceran;
+
+    return p.price || p.selling_price || p.cost_price || 0;
+  };
+
   const addToCart = (product: any) => {
     const pId = product.id || product._id;
+    const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
+    const itemPrice = getProductPrice(product, currentTier);
+
     const existingIndex = cart.findIndex((item) => (item.id || item._id) === pId);
 
     if (existingIndex > -1) {
       const updated = [...cart];
       updated[existingIndex].qty += 1;
+      updated[existingIndex].price = itemPrice;
       setCart(updated);
     } else {
-      setCart([...cart, { ...product, qty: 1 }]);
+      setCart([...cart, { ...product, price: itemPrice, qty: 1 }]);
     }
   };
 
-  // FITUR KURANG DAN TAMBAH QTY DI KERANJANG
+  // FITUR KURANG (-) DAN TAMBAH (+) DI KERANJANG
   const updateQty = (index: number, delta: number) => {
     const updated = [...cart];
     const newQty = updated[index].qty + delta;
@@ -179,31 +196,36 @@ export default function PosScreen() {
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
             <Text style={styles.sectionTitle}>Pilih Produk Depot</Text>
             <View style={styles.productGrid}>
-              {products.map((p) => (
-                <Pressable
-                  key={p.id || p._id}
-                  style={styles.productCard}
-                  onPress={() => addToCart(p)}
-                >
-                  <Text style={styles.productTitle}>{p.name}</Text>
-                  <Text style={styles.productPrice}>
-                    Rp {(p.price || 0).toLocaleString("id-ID")}
-                  </Text>
-                  <Text style={styles.productStock}>
-                    Stok Isi: {p.stock_filled || 0}
-                  </Text>
-                  <View style={styles.addCartBadge}>
-                    <Icon name="add" size={16} color="#fff" />
-                  </View>
-                </Pressable>
-              ))}
+              {products.map((p) => {
+                const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
+                const displayPrice = getProductPrice(p, currentTier);
+
+                return (
+                  <Pressable
+                    key={p.id || p._id}
+                    style={styles.productCard}
+                    onPress={() => addToCart(p)}
+                  >
+                    <Text style={styles.productTitle}>{p.name}</Text>
+                    <Text style={styles.productPrice}>
+                      Rp {displayPrice.toLocaleString("id-ID")}
+                    </Text>
+                    <Text style={styles.productStock}>
+                      Stok Isi: {p.stock_filled || 0}
+                    </Text>
+                    <View style={styles.addCartBadge}>
+                      <Icon name="add" size={16} color="#fff" />
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           </ScrollView>
 
           {cart.length > 0 && (
             <View style={styles.cartFooter}>
               <Text style={styles.cartHeaderTitle}>
-                Item Transaksi ({cart.reduce((sum, i) => sum + i.qty, 0)})
+                Item Transaksi ({cart.reduce((sum, i) => sum + i.qty, 0)} Pcs)
               </Text>
 
               <ScrollView style={{ maxHeight: 120, marginVertical: 6 }}>
