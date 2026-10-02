@@ -252,6 +252,71 @@ async def create_transaction(tx: TransactionModel):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memproses transaksi: {str(e)}")
+
+        @app.get("/dashboard")
+@app.get("/api/dashboard")
+async def get_dashboard():
+    try:
+        # Hitung total omzet & jumlah transaksi dari MongoDB
+        pipeline = [
+            {"$group": {"_id": None, "total_revenue": {"$sum": "$total_amount"}, "count": {"$sum": 1}}}
+        ]
+        agg_result = await db.transactions.aggregate(pipeline).to_list(length=1)
+        
+        revenue = agg_result[0]["total_revenue"] if agg_result else 0
+        tx_count = agg_result[0]["count"] if agg_result else 0
+
+        # Ambil 5 transaksi terakhir
+        recent_tx = []
+        cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1).limit(5)
+        async for doc in cursor:
+            recent_tx.append(doc)
+
+        # Ambil produk dengan stok kritis (di bawah reorder point)
+        low_stock = []
+        cursor_stock = db.products.find({"$expr": {"$lte": ["$stock_filled", "$reorder_point"]}}, {"_id": 0})
+        async for doc in cursor_stock:
+            low_stock.append(doc)
+
+        return {
+            "status": "success",
+            "revenue": revenue,
+            "transactions_count": tx_count,
+            "low_stock_count": len(low_stock),
+            "recent_transactions": recent_tx,
+            "low_stock_items": low_stock,
+            "daily_revenue": revenue,
+            "monthly_revenue": revenue,
+            "total_sales": revenue,
+            "data": []
+        }
+    except Exception as e:
+        print(f"Error dashboard: {e}")
+        return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
+
+@app.get("/reports")
+@app.get("/api/reports")
+@app.get("/reports/financial")
+@app.get("/api/reports/financial")
+async def get_reports():
+    try:
+        transactions = []
+        cursor = db.transactions.find({}, {"_id": 0}).sort("created_at", -1)
+        async for doc in cursor:
+            transactions.append(doc)
+
+        total_income = sum(t.get("total_amount", 0) for t in transactions)
+
+        return {
+            "status": "success",
+            "daily": total_income,
+            "monthly": total_income,
+            "yearly": total_income,
+            "total_transactions": len(transactions),
+            "data": transactions
+        }
+    except Exception as e:
+        return {"daily": 0, "monthly": 0, "yearly": 0, "total_transactions": 0, "data": []}
 # ====================================================================
 # CATCH-ALL WILDCARD
 # ====================================================================
