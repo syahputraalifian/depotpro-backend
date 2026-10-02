@@ -92,8 +92,12 @@ export default function LoginScreen() {
       if (loginApi) {
         const res = await loginApi({ email: email.trim(), password: password.trim() });
         if (res && res.access_token) {
+          // SIMPAN TOKEN DAN ROLE BACKEND RESMI
           await storage.secureSet(TOKEN_KEY, res.access_token);
-          showToast(`Selamat datang, ${res.user?.name || "Pengguna"}`);
+          const activeRole = res.user?.role || selectedRole || "owner";
+          await storage.secureSet("user_role", activeRole.toLowerCase());
+
+          showToast(`Selamat datang, ${res.user?.name || activeRole.toUpperCase()}`);
           router.replace("/(tabs)");
           return;
         }
