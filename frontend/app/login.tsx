@@ -123,7 +123,6 @@ export default function LoginScreen() {
           <Text style={styles.appSubtitle}>Manajemen Depot Gas Galon</Text>
         </View>
 
-        {/* Pilihan Cepat Role (Owner, Kasir, Gudang, Driver) */}
         <Text style={styles.sectionTitle}>Pilih Role Akun Demo:</Text>
         <View style={styles.presetGrid}>
           {ROLE_PRESETS.map((item) => {
@@ -151,7 +150,6 @@ export default function LoginScreen() {
           })}
         </View>
 
-        {/* Form Input Manual */}
         <View style={styles.formContainer}>
           <Text style={styles.inputLabel}>Email / Username</Text>
           <View style={styles.inputBox}>
