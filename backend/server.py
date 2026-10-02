@@ -208,6 +208,50 @@ async def create_product_real(product: ProductModel):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menyimpan ke MongoDB: {str(e)}")
 
+class TransactionItemModel(BaseModel):
+    product_id: str
+    product_name: str
+    qty: int
+    price: float
+
+class TransactionModel(BaseModel):
+    items: List[TransactionItemModel]
+    total_amount: float
+    payment_method: str = "cash"  # cash, qris, transfer
+    customer_name: Optional[str] = "Eceran / Umum"
+
+@app.post("/transactions")
+@app.post("/api/transactions")
+async def create_transaction(tx: TransactionModel):
+    try:
+        tx_data = tx.dict()
+        tx_data["id"] = f"tx-{uuid.uuid4().hex[:8]}"
+        tx_data["created_at"] = datetime.utcnow().isoformat()
+
+        # 1. Simpan data transaksi ke koleksi transactions di MongoDB
+        await db.transactions.insert_one(tx_data)
+
+        # 2. Kurangi stok terisi (stock_filled) & tambah total_sold untuk tiap produk
+        for item in tx.items:
+            await db.products.update_one(
+                {"id": item.product_id},
+                {
+                    "$inc": {
+                        "stock_filled": -item.qty,
+                        "total_sold": item.qty
+                    }
+                }
+            )
+
+        # Hapus _id BSON bawaan MongoDB sebelum return JSON
+        if "_id" in tx_data:
+            del tx_data["_id"]
+
+        print(f"[TRANSACTION SUCCESS] TX ID: {tx_data['id']} | Total: {tx_data['total_amount']}")
+        return {"status": "success", "data": tx_data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal memproses transaksi: {str(e)}")
 # ====================================================================
 # CATCH-ALL WILDCARD
 # ====================================================================
