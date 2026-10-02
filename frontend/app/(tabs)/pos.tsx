@@ -407,3 +407,36 @@ const useStyles = makeStyles((c) => ({
   customerOptionName: { fontSize: 14, fontWeight: "800", color: c.onSurface },
   customerOptionSub: { fontSize: 11, color: c.muted, marginTop: 2 },
 }));
+// FUNGSI PENCARIAN HARGA UNIVERSAL (Mendeteksi semua kemungkinan nama field di DB)
+  const getProductPrice = (product: any, customerTier: string) => {
+    if (!product) return 0;
+    
+    // 1. Cek jika ada harga spesifik berdasarkan tier pelanggan
+    const tier = (customerTier || "eceran").toLowerCase();
+    if (product.tier_prices && typeof product.tier_prices === "object") {
+      if (product.tier_prices[tier] !== undefined && product.tier_prices[tier] !== null) {
+        return Number(product.tier_prices[tier]);
+      }
+    }
+
+    // 2. Cek semua kemungkinan nama properti harga di database MongoDB
+    const possiblePriceKeys = [
+      "price", 
+      "selling_price", 
+      "base_price", 
+      "retail_price", 
+      "harga", 
+      "harga_jual",
+      "hargajual",
+      "amount"
+    ];
+
+    for (const key of possiblePriceKeys) {
+      if (product[key] !== undefined && product[key] !== null && Number(product[key]) > 0) {
+        return Number(product[key]);
+      }
+    }
+
+    // Fallback terakhir jika tidak ketemu sama sekali
+    return 0;
+  };
