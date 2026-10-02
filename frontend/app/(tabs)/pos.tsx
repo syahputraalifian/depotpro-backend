@@ -1,39 +1,20 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
   ScrollView,
-  RefreshControl,
   Pressable,
   TextInput,
+  ActivityIndicator,
+  FlatList,
 } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
 import { api } from "@/src/api";
 import * as formatModule from "@/src/format";
 import * as uiModule from "@/src/ui";
-
-// Initial seed produk agar layar Kasir tidak pernah kosong
-const FALLBACK_PRODUCTS = [
-  {
-    id: "prod-1",
-    name: "Gas LPG 3 Kg",
-    category: "lpg",
-    price_eceran: 20000,
-    price: 20000,
-    stock_filled: 50,
-  },
-  {
-    id: "prod-2",
-    name: "Air Galon Brand 19L",
-    category: "galon_brand",
-    price_eceran: 20000,
-    price: 20000,
-    stock_filled: 30,
-  },
-];
 
 const safeRupiah = (val: number) => {
   const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
@@ -47,147 +28,86 @@ const safeRupiah = (val: number) => {
   return `Rp ${(val || 0).toLocaleString("id-ID")}`;
 };
 
-const extractArrayData = (res: any): any[] => {
-  if (!res) return [];
-  if (Array.isArray(res)) return res;
-  if (Array.isArray(res.data)) return res.data;
-  if (Array.isArray(res.result)) return res.result;
-  if (Array.isArray(res.data?.data)) return res.data.data;
-  if (Array.isArray(res.data?.result)) return res.data.result;
-  return [];
-};
-
-const getProductPrice = (product: any) => {
-  if (!product) return 0;
-  return Number(product.price_eceran || product.price || product.cost_price || 0);
-};
-
 export default function POSScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const showToast = useCallback((msg: string) => {
-    try {
-      const useToastHook = (uiModule as any)?.useToast;
-      if (typeof useToastHook === "function") {
-        const toast = useToastHook();
-        if (typeof toast === "function") {
-          toast(msg);
-          return;
-        } else if (toast && typeof toast.show === "function") {
-          toast.show(msg);
-          return;
-        }
-      }
-    } catch (e) {}
-    console.log("[Toast]:", msg);
-  }, []);
+  const [products, setProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
+  const [priceType, setPriceType] = useState<"eceran" | "warung" | "pangkalan" | "korporat">("eceran");
 
-  const [products, setProducts] = useState<any[]>(FALLBACK_PRODUCTS);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [search, setSearch] = useState<string>("");
+  // Cart format: { product, qty, isExchange, price }
   const [cart, setCart] = useState<any[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const fetchProducts = async () => {
+    setLoading(true);
     try {
       const getApi = typeof api?.get === "function" ? api.get : null;
-      if (!getApi) return;
-
-      const [prodRes, catRes] = await Promise.all([
-        getApi("/products").catch(() => []),
-        getApi("/categories").catch(() => []),
-      ]);
-
-      const safeProd = extractArrayData(prodRes);
-      
-      // Gabungkan data dari backend dengan data lokal/fallback
-      setProducts((prev) => {
-        const combined = [...prev, ...safeProd];
-        const map = new Map();
-        combined.forEach((item) => {
-          if (item && (item.id || item.name)) {
-            map.set(item.id || item.name, item);
-          }
-        });
-        return Array.from(map.values());
-      });
-
-      const safeCat = extractArrayData(catRes);
-      if (safeCat.length > 0) {
-        setCategories(safeCat);
-      } else {
-        const currentProducts = safeProd.length > 0 ? safeProd : FALLBACK_PRODUCTS;
-        const uniqueCats = Array.from(
-          new Set(currentProducts.map((p) => p?.category).filter(Boolean))
-        ).map((catName) => ({ id: catName, name: String(catName).toUpperCase() }));
-        setCategories(uniqueCats);
+      if (getApi) {
+        const res = await getApi("/products");
+        const list = Array.isArray(res) ? res : res?.data || [];
+        setProducts(list);
       }
-    } catch (e: any) {
-      showToast(e?.message || "Gagal memuat produk POS");
+    } catch (e) {
+      console.log("Error fetching products:", e);
+    } finally {
+      setLoading(false);
     }
-  }, [showToast]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
   };
 
-  const addToCart = (product: any) => {
-    if (!product) return;
-    const maxStock = Number(product.stock_filled ?? 9999);
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  // Getting effective price based on selected price tier
+  const getProductPrice = (item: any, tier: string, isExchange: boolean) => {
+    let basePrice = item.price_eceran || 0;
+    if (tier === "warung") basePrice = item.price_warung || basePrice;
+    if (tier === "pangkalan") basePrice = item.price_pangkalan || basePrice;
+    if (tier === "korporat") basePrice = item.price_korporat || basePrice;
+
+    // Jika Beli Baru (Bukan Tukar Tabung), tambahkan Deposit Tabung
+    if (!isExchange && item.deposit_amount) {
+      basePrice += item.deposit_amount;
+    }
+    return basePrice;
+  };
+
+  const addToCart = (product: any, isExchange: boolean = true) => {
+    const effectivePrice = getProductPrice(product, priceType, isExchange);
+    const cartKey = `${product.id || product.name}_${isExchange ? "isi" : "baru"}`;
 
     setCart((prev) => {
-      const safePrev = Array.isArray(prev) ? prev : [];
-      const index = safePrev.findIndex((item) => item?.product?.id === product?.id || item?.product?.name === product?.name);
-
-      if (index > -1) {
-        const currentQty = safePrev[index]?.qty || 0;
-        if (currentQty >= maxStock) {
-          showToast(`Stok ${product.name} terbatas (${maxStock})`);
-          return safePrev;
-        }
-        const updated = [...safePrev];
-        updated[index] = {
-          ...updated[index],
-          qty: currentQty + 1,
-        };
+      const existingIdx = prev.findIndex((c) => c.key === cartKey);
+      if (existingIdx > -1) {
+        const updated = [...prev];
+        updated[existingIdx].qty += 1;
         return updated;
       }
-
-      if (maxStock <= 0) {
-        showToast(`Stok ${product.name} habis`);
-        return safePrev;
-      }
-
-      return [...safePrev, { product, qty: 1, price: getProductPrice(product) }];
+      return [
+        ...prev,
+        {
+          key: cartKey,
+          product,
+          qty: 1,
+          isExchange,
+          price: effectivePrice,
+          priceType,
+        },
+      ];
     });
   };
 
-  const updateQty = (productId: string, delta: number) => {
+  const updateCartQty = (key: string, delta: number) => {
     setCart((prev) => {
-      const safePrev = Array.isArray(prev) ? prev : [];
-      return safePrev
+      return prev
         .map((item) => {
-          const id = item?.product?.id || item?.product?.name;
-          if (id === productId) {
-            const maxStock = Number(item?.product?.stock_filled ?? 9999);
-            const newQty = (item?.qty || 0) + delta;
-
-            if (newQty > maxStock) {
-              showToast(`Maksimal stok tercapai (${maxStock})`);
-              return item;
-            }
+          if (item.key === key) {
+            const newQty = item.qty + delta;
             return newQty > 0 ? { ...item, qty: newQty } : null;
           }
           return item;
@@ -196,263 +116,208 @@ export default function POSScreen() {
     });
   };
 
-  const clearCart = () => {
-    setCart([]);
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchSearch = (p.name || "").toLowerCase().includes(search.toLowerCase());
+      const matchCat = category === "all" || p.category === category;
+      return matchSearch && matchCat;
+    });
+  }, [products, search, category]);
+
+  const totalCartAmount = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  }, [cart]);
+
+  const totalCartItems = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.qty, 0);
+  }, [cart]);
+
+  const proceedToCheckout = () => {
+    if (cart.length === 0) return;
+    router.push({
+      pathname: "/checkout",
+      params: { cart: JSON.stringify(cart), priceType },
+    });
   };
-
-  const safeProducts = Array.isArray(products) ? products : [];
-  const safeCategories = Array.isArray(categories) ? categories : [];
-  const safeCart = Array.isArray(cart) ? cart : [];
-
-  const filteredProducts = safeProducts.filter((p) => {
-    if (!p) return false;
-    const matchesSearch = (p?.name || "")
-      .toLowerCase()
-      .includes((search || "").toLowerCase());
-      
-    if (!matchesSearch) return false;
-
-    if (selectedCategory === "all") return true;
-
-    const cat = String(p?.category || p?.category_id || "").toLowerCase();
-    const targetCat = String(selectedCategory).toLowerCase();
-
-    if (targetCat === "lpg") return cat.includes("lpg") || cat.includes("gas");
-    if (targetCat === "galon_brand") return cat.includes("galon") || cat.includes("brand") || cat.includes("air");
-    if (targetCat === "refill") return cat.includes("refill") || cat.includes("ulang");
-
-    return cat === targetCat;
-  });
-
-  const totalCartAmount = safeCart.reduce((sum, item) => {
-    const price = item?.price ?? getProductPrice(item?.product);
-    return sum + price * (item?.qty || 0);
-  }, 0);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header Search */}
+      {/* Header & Price Tier Selector */}
       <View style={styles.header}>
+        <Text style={styles.headerTitle}>Kasir DepotPro</Text>
+        <Pressable onPress={fetchProducts} style={styles.refreshBtn}>
+          <Icon name="refresh" size={18} color="#fff" />
+        </Pressable>
+      </View>
+
+      {/* Selector Tipe Harga Pelanggan */}
+      <View style={styles.tierContainer}>
+        <Text style={styles.tierLabel}>Tipe Harga:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+          {[
+            { id: "eceran", label: "Eceran" },
+            { id: "warung", label: "Warung" },
+            { id: "pangkalan", label: "Pangkalan" },
+            { id: "korporat", label: "Korporat" },
+          ].map((t) => (
+            <Pressable
+              key={t.id}
+              style={[
+                styles.tierChip,
+                priceType === t.id && styles.tierChipActive,
+              ]}
+              onPress={() => setPriceType(t.id as any)}
+            >
+              <Text
+                style={[
+                  styles.tierText,
+                  priceType === t.id && styles.tierTextActive,
+                ]}
+              >
+                {t.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Filter Category & Search */}
+      <View style={styles.searchSection}>
         <View style={styles.searchBox}>
           <Icon name="search" size={18} color={colors.muted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Cari produk gas, galon, dll..."
-            placeholderTextColor={colors.muted}
+            placeholder="Cari LPG / Galon..."
             value={search}
             onChangeText={setSearch}
+            placeholderTextColor={colors.muted}
           />
-          {search ? (
-            <Pressable onPress={() => setSearch("")}>
-              <Icon name="close-circle" size={18} color={colors.muted} />
-            </Pressable>
-          ) : null}
         </View>
-      </View>
 
-      {/* Kategori Horizontal */}
-      <View style={{ maxHeight: 50 }}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.catScroll}
-        >
-          <Pressable
-            style={[
-              styles.catChip,
-              selectedCategory === "all" && styles.catChipActive,
-            ]}
-            onPress={() => setSelectedCategory("all")}
-          >
-            <Text
-              style={[
-                styles.catText,
-                selectedCategory === "all" && styles.catTextActive,
-              ]}
-            >
-              Semua
-            </Text>
-          </Pressable>
-          {safeCategories.map((cat) => {
-            const catId = cat?.id || cat?.key || cat?.name;
-            const isSelected = selectedCategory === catId;
-            return (
-              <Pressable
-                key={catId || Math.random().toString()}
-                style={[styles.catChip, isSelected && styles.catChipActive]}
-                onPress={() => setSelectedCategory(catId)}
-              >
-                <Text
-                  style={[styles.catText, isSelected && styles.catTextActive]}
-                >
-                  {cat?.name || cat?.label || "Kategori"}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* Grid Produk & Panel Kasir */}
-      <View style={styles.contentContainer}>
-        <ScrollView
-          style={styles.productGrid}
-          contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.brandPrimary}
-            />
-          }
-        >
-          {filteredProducts.length === 0 ? (
-            <Text style={styles.emptyText}>Tidak ada produk ditemukan</Text>
-          ) : (
-            <View style={styles.gridRow}>
-              {filteredProducts.map((p) => {
-                const price = getProductPrice(p);
-                const isOutOfStock = (p?.stock_filled ?? 0) <= 0;
-                return (
-                  <Pressable
-                    key={p?.id || p?.name || Math.random().toString()}
-                    style={[
-                      styles.productCard,
-                      isOutOfStock && { opacity: 0.6 },
-                    ]}
-                    onPress={() => addToCart(p)}
-                  >
-                    <Text style={styles.productName} numberOfLines={2}>
-                      {p?.name || "Produk"}
-                    </Text>
-                    <Text style={styles.productPrice}>{safeRupiah(price)}</Text>
-                    <Text
-                      style={[
-                        styles.productStock,
-                        isOutOfStock && { color: colors.error },
-                      ]}
-                    >
-                      {isOutOfStock ? "Stok Habis" : `Stok: ${p?.stock_filled ?? 0}`}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          )}
-        </ScrollView>
-
-        {/* Panel Keranjang */}
-        <View style={styles.cartPanel}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <Text style={styles.cartTitle}>Keranjang Belanja</Text>
-            {safeCart.length > 0 && (
-              <Pressable onPress={clearCart}>
-                <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>Reset</Text>
-              </Pressable>
-            )}
-          </View>
-
-          <ScrollView
-            style={styles.cartList}
-            contentContainerStyle={{ paddingBottom: 10 }}
-          >
-            {safeCart.length === 0 ? (
-              <Text style={styles.emptyCartText}>Belum ada item dipilih</Text>
-            ) : (
-              safeCart.map((item, idx) => {
-                const price = item?.price ?? getProductPrice(item?.product);
-                const itemId = item?.product?.id || item?.product?.name;
-                return (
-                  <View key={itemId || idx} style={styles.cartRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cartItemName} numberOfLines={1}>
-                        {item?.product?.name}
-                      </Text>
-                      <Text style={styles.cartItemPrice}>
-                        {safeRupiah(price)}
-                      </Text>
-                    </View>
-                    <View style={styles.qtyContainer}>
-                      <Pressable
-                        style={styles.qtyBtn}
-                        onPress={() => updateQty(itemId, -1)}
-                      >
-                        <Text style={styles.qtyBtnText}>-</Text>
-                      </Pressable>
-                      <Text style={styles.qtyText}>{item?.qty || 0}</Text>
-                      <Pressable
-                        style={styles.qtyBtn}
-                        onPress={() => updateQty(itemId, 1)}
-                      >
-                        <Text style={styles.qtyBtnText}>+</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </ScrollView>
-
-          <View style={styles.cartFooter}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total:</Text>
-              <Text style={styles.totalValue}>{safeRupiah(totalCartAmount)}</Text>
-            </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 8 }}>
+          {[
+            { id: "all", label: "Semua" },
+            { id: "lpg", label: "LPG" },
+            { id: "galon_brand", label: "Galon Brand" },
+            { id: "isi_ulang", label: "Isi Ulang" },
+          ].map((c) => (
             <Pressable
+              key={c.id}
               style={[
-                styles.checkoutBtn,
-                safeCart.length === 0 && { opacity: 0.5 },
+                styles.catChip,
+                category === c.id && styles.catChipActive,
               ]}
-              disabled={safeCart.length === 0}
-              onPress={() =>
-                router.push({
-                  pathname: "/checkout",
-                  params: { cart: JSON.stringify(safeCart) },
-                })
-              }
+              onPress={() => setCategory(c.id)}
             >
-              <Text style={styles.checkoutText}>Proses Pembayaran</Text>
+              <Text style={[styles.catText, category === c.id && styles.catTextActive]}>
+                {c.label}
+              </Text>
             </Pressable>
-          </View>
-        </View>
+          ))}
+        </ScrollView>
       </View>
+
+      {/* Main Content Area */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={styles.loadingText}>Memuat Produk...</Text>
+        </View>
+      ) : (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 160 }}>
+          <View style={styles.productGrid}>
+            {filteredProducts.map((p) => {
+              const currentPrice = getProductPrice(p, priceType, true);
+              const newPrice = getProductPrice(p, priceType, false);
+
+              return (
+                <View key={p.id || p.name} style={styles.productCard}>
+                  <Text style={styles.productName}>{p.name}</Text>
+                  <Text style={styles.stockBadge}>
+                    Stok: {p.stock_filled || 0} Terisi
+                  </Text>
+
+                  <View style={styles.priceContainer}>
+                    <Text style={styles.priceLabel}>Isi Ulang / Tukar:</Text>
+                    <Text style={styles.priceValue}>{safeRupiah(currentPrice)}</Text>
+                  </View>
+
+                  <Pressable
+                    style={styles.addBtn}
+                    onPress={() => addToCart(p, true)}
+                  >
+                    <Icon name="swap-horizontal" size={16} color="#fff" />
+                    <Text style={styles.addBtnText}>+ Tukar Tabung</Text>
+                  </Pressable>
+
+                  {p.is_returnable && (
+                    <Pressable
+                      style={styles.addSecondaryBtn}
+                      onPress={() => addToCart(p, false)}
+                    >
+                      <Text style={styles.addSecondaryBtnText}>
+                        + Beli Baru ({safeRupiah(newPrice)})
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* Floating Bottom Cart Bar */}
+      {cart.length > 0 && (
+        <View style={[styles.cartBar, { paddingBottom: insets.bottom + 8 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cartCountText}>{totalCartItems} Item Ditemukan</Text>
+            <Text style={styles.cartTotalText}>{safeRupiah(totalCartAmount)}</Text>
+          </View>
+          <Pressable style={styles.checkoutBtn} onPress={proceedToCheckout}>
+            <Text style={styles.checkoutBtnText}>Bayar SEKARANG</Text>
+            <Icon name="arrow-forward" size={18} color="#fff" />
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  header: { padding: 12, backgroundColor: c.brand, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
-  searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: c.surface, borderRadius: 10, paddingHorizontal: 12, height: 40 },
-  searchInput: { flex: 1, marginLeft: 8, color: c.onSurface, fontSize: 14 },
-  catScroll: { paddingHorizontal: 12, paddingVertical: 8, alignItems: "center", gap: 8 },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, backgroundColor: c.brandPrimary },
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  refreshBtn: { padding: 6 },
+  tierContainer: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, backgroundColor: c.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: c.border },
+  tierLabel: { fontSize: 12, fontWeight: "700", color: c.muted, marginRight: 8 },
+  tierChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  tierChipActive: { backgroundColor: c.brandPrimary, borderBottomColor: c.brandPrimary },
+  tierText: { fontSize: 12, fontWeight: "700", color: c.muted },
+  tierTextActive: { color: "#fff" },
+  searchSection: { paddingHorizontal: 12, paddingTop: 10, backgroundColor: c.surface },
+  searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: c.surfaceSecondary, borderRadius: 10, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: c.border },
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 13, color: c.onSurface },
   catChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: c.surfaceSecondary, borderWidth: 1, borderColor: c.border },
   catChipActive: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
-  catText: { fontSize: 13, color: c.muted, fontWeight: "600" },
-  catTextActive: { color: c.onBrandPrimary },
-  contentContainer: { flex: 1, flexDirection: "row" },
-  productGrid: { flex: 1 },
-  gridRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  productCard: { width: "48%", backgroundColor: c.surfaceSecondary, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.border, marginBottom: 8 },
-  productName: { fontSize: 13, fontWeight: "700", color: c.onSurface, height: 36 },
-  productPrice: { fontSize: 13, fontWeight: "800", color: c.brandPrimary, marginTop: 4 },
-  productStock: { fontSize: 11, color: c.muted, marginTop: 2 },
-  emptyText: { textAlign: "center", color: c.muted, marginTop: 30, fontSize: 13 },
-  cartPanel: { width: "42%", backgroundColor: c.surfaceSecondary, borderLeftWidth: 1, borderLeftColor: c.border, padding: 12, display: "flex", flexDirection: "column" },
-  cartTitle: { fontSize: 14, fontWeight: "800", color: c.onSurface },
-  cartList: { flex: 1 },
-  emptyCartText: { textAlign: "center", color: c.muted, fontSize: 12, marginTop: 20 },
-  cartRow: { flexDirection: "row", alignItems: "center", marginBottom: 10, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: c.border },
-  cartItemName: { fontSize: 12, fontWeight: "700", color: c.onSurface },
-  cartItemPrice: { fontSize: 11, color: c.muted },
-  qtyContainer: { flexDirection: "row", alignItems: "center", gap: 6 },
-  qtyBtn: { width: 24, height: 24, borderRadius: 6, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
-  qtyBtnText: { fontWeight: "bold", fontSize: 12, color: c.brandPrimary },
-  qtyText: { fontSize: 12, fontWeight: "700", color: c.onSurface, minWidth: 16, textAlign: "center" },
-  cartFooter: { borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-  totalLabel: { fontSize: 13, fontWeight: "700", color: c.muted },
-  totalValue: { fontSize: 14, fontWeight: "800", color: c.onSurface },
-  checkoutBtn: { backgroundColor: c.brandPrimary, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
-  checkoutText: { color: c.onBrandPrimary, fontSize: 13, fontWeight: "700" },
+  catText: { fontSize: 12, fontWeight: "600", color: c.muted },
+  catTextActive: { color: "#fff" },
+  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  loadingText: { marginTop: 8, fontSize: 13, color: c.muted },
+  productGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  productCard: { width: "48%", backgroundColor: c.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.border, justifyContent: "space-between" },
+  productName: { fontSize: 14, fontWeight: "800", color: c.onSurface },
+  stockBadge: { fontSize: 11, color: c.muted, marginTop: 2, marginBottom: 8 },
+  priceContainer: { marginBottom: 8 },
+  priceLabel: { fontSize: 10, color: c.muted },
+  priceValue: { fontSize: 15, fontWeight: "800", color: c.brandPrimary },
+  addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: c.brandPrimary, paddingVertical: 8, borderRadius: 8, gap: 4, marginBottom: 6 },
+  addBtnText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  addSecondaryBtn: { alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: c.border },
+  addSecondaryBtnText: { color: c.onSurface, fontSize: 10, fontWeight: "700" },
+  cartBar: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.border, padding: 12, flexDirection: "row", alignItems: "center", elevation: 10, shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 10 },
+  cartCountText: { fontSize: 11, color: c.muted },
+  cartTotalText: { fontSize: 18, fontWeight: "800", color: c.brandPrimary },
+  checkoutBtn: { flexDirection: "row", alignItems: "center", backgroundColor: c.brandPrimary, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, gap: 6 },
+  checkoutBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 }));
