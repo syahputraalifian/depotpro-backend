@@ -183,19 +183,16 @@ export default function StokScreen() {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
-          setSubmitting(true);
+          setProducts((prev) => prev.filter((p) => p.id !== idToDelete));
+          setModalVisible(false);
           try {
             const delApi = typeof api?.delete === "function" ? api.delete : null;
             if (delApi) {
               await delApi(`/products/${idToDelete}`);
             }
-            showToast("Produk berhasil dihapus");
-            setModalVisible(false);
             fetchProducts();
-          } catch (e: any) {
-            showToast("Gagal menghapus produk");
-          } finally {
-            setSubmitting(false);
+          } catch (e) {
+            console.log("Error delete:", e);
           }
         },
       },
@@ -373,22 +370,6 @@ export default function StokScreen() {
                 keyboardType="numeric"
                 value={formData.price_eceran}
                 onChangeText={(val) => setFormData({ ...formData, price_eceran: val })}
-              />
-
-              <Text style={styles.inputLabel}>Harga Warung</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={formData.price_warung}
-                onChangeText={(val) => setFormData({ ...formData, price_warung: val })}
-              />
-
-              <Text style={styles.inputLabel}>Harga Deposit Tabung (Jika Beli Baru)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={formData.deposit_amount}
-                onChangeText={(val) => setFormData({ ...formData, deposit_amount: val })}
               />
             </ScrollView>
 

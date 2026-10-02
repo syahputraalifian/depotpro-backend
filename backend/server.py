@@ -46,7 +46,6 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
 
 async def remove_document(collection, item_id: str):
-    # Coba hapus berdasarkan field 'id' string atau BSON '_id'
     query = {"$or": [{"id": item_id}]}
     if ObjectId.is_valid(item_id):
         query["$or"].append({"_id": ObjectId(item_id)})
@@ -115,7 +114,6 @@ async def get_dashboard():
     except Exception as e:
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
-# DELETE PRODUCTS
 @app.delete("/products/{product_id}")
 @app.delete("/api/products/{product_id}")
 async def delete_product(product_id: str):
@@ -123,7 +121,6 @@ async def delete_product(product_id: str):
         return {"status": "success", "message": "Produk berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
-# DELETE CUSTOMERS
 @app.delete("/customers/{customer_id}")
 @app.delete("/api/customers/{customer_id}")
 async def delete_customer(customer_id: str):
@@ -131,7 +128,6 @@ async def delete_customer(customer_id: str):
         return {"status": "success", "message": "Pelanggan berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
 
-# DELETE DRIVERS
 @app.delete("/drivers/{driver_id}")
 @app.delete("/api/drivers/{driver_id}")
 async def delete_driver(driver_id: str):
@@ -139,7 +135,6 @@ async def delete_driver(driver_id: str):
         return {"status": "success", "message": "Driver berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Driver tidak ditemukan")
 
-# DELETE REPORTS/TRANSACTIONS
 @app.delete("/reports/{tx_id}")
 @app.delete("/api/reports/{tx_id}")
 @app.delete("/transactions/{tx_id}")
@@ -149,7 +144,6 @@ async def delete_transaction(tx_id: str):
         return {"status": "success", "message": "Transaksi berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
 
-# GET & POST HANDLERS
 @app.get("/products")
 @app.get("/api/products")
 async def get_products():

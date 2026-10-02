@@ -85,6 +85,10 @@ export default function LaporanScreen() {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
+          setReportData((prev: any) => ({
+            ...prev,
+            data: (prev.data || []).filter((item: any) => item.id !== txId),
+          }));
           try {
             const delApi = typeof api?.delete === "function" ? api.delete : null;
             if (delApi) {
@@ -93,7 +97,7 @@ export default function LaporanScreen() {
             showToast("Riwayat transaksi terhapus");
             fetchReports();
           } catch (e) {
-            showToast("Gagal menghapus transaksi");
+            console.log("Error delete:", e);
           }
         },
       },
