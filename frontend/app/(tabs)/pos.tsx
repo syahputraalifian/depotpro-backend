@@ -23,7 +23,6 @@ export default function PosScreen() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // State Keranjang & Pelanggan Terpilih
   const [cart, setCart] = useState<any[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -74,24 +73,55 @@ export default function PosScreen() {
     fetchData();
   }, []);
 
+  // FUNGSI MENENTUKAN HARGA BERDASARKAN TIER PELANGGAN & STOK
+  const getProductPrice = (product: any, customerTier: string) => {
+    const tier = (customerTier || "eceran").toLowerCase();
+    
+    // Cek apakah produk memiliki harga khusus berdasarkan tier di database
+    if (product.tier_prices && typeof product.tier_prices === "object") {
+      if (product.tier_prices[tier] !== undefined && product.tier_prices[tier] !== null) {
+        return Number(product.tier_prices[tier]);
+      }
+    }
+    
+    // Fallback ke harga umum / selling_price / price standar produk
+    return Number(
+      product.price ?? 
+      product.selling_price ?? 
+      product.base_price ?? 
+      0
+    );
+  };
+
   const addToCart = (product: any) => {
     const pId = product.id || product._id;
+    const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
+    const activePrice = getProductPrice(product, currentTier);
+    const maxStock = product.stock_filled ?? product.stock ?? 999;
+
     const existingIndex = cart.findIndex((item) => (item.id || item._id) === pId);
-    
-    // Cek batas stok isi yang tersedia
-    const maxStock = product.stock_filled ?? 999;
 
     if (existingIndex > -1) {
       const updated = [...cart];
       if (updated[existingIndex].qty < maxStock) {
         updated[existingIndex].qty += 1;
+        // Sinkronkan harga terbaru sesuai tier
+        updated[existingIndex].price = activePrice;
         setCart(updated);
       } else {
         showToast("Stok produk tidak mencukupi");
       }
     } else {
       if (maxStock > 0) {
-        setCart([...cart, { ...product, qty: 1 }]);
+        setCart([
+          ...cart,
+          {
+            ...product,
+            price: activePrice,
+            qty: 1,
+            stock_filled: maxStock,
+          },
+        ]);
       } else {
         showToast("Stok produk habis");
       }
@@ -101,9 +131,8 @@ export default function PosScreen() {
   const updateQty = (index: number, delta: number) => {
     const updated = [...cart];
     const newQty = updated[index].qty + delta;
-    
+
     if (newQty <= 0) {
-      // Hapus item dari keranjang jika qty <= 0
       updated.splice(index, 1);
     } else {
       const maxStock = updated[index].stock_filled ?? 999;
@@ -144,7 +173,7 @@ export default function PosScreen() {
         await postApi("/transactions", payload);
       }
 
-      showToast("Transaksi berhasil disimpan!");
+      showToast("Transaksi berhasil disimpan & stok terpotong!");
       setCart([]);
       fetchData();
     } catch (e: any) {
@@ -193,30 +222,35 @@ export default function PosScreen() {
       ) : (
         <View style={{ flex: 1, flexDirection: "column" }}>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
-            <Text style={styles.sectionTitle}>Pilih Produk Depot</Text>
+            <Text style={styles.sectionTitle}>Pilih Produk Depot (Sinkron Stok)</Text>
             <View style={styles.productGrid}>
-              {products.map((p) => (
-                <Pressable
-                  key={p.id || p._id}
-                  style={styles.productCard}
-                  onPress={() => addToCart(p)}
-                >
-                  <Text style={styles.productTitle}>{p.name}</Text>
-                  <Text style={styles.productPrice}>
-                    Rp {(p.price || 0).toLocaleString("id-ID")}
-                  </Text>
-                  <Text style={styles.productStock}>
-                    Stok Isi: {p.stock_filled || 0}
-                  </Text>
-                  <View style={styles.addCartBadge}>
-                    <Icon name="add" size={16} color="#fff" />
-                  </View>
-                </Pressable>
-              ))}
+              {products.map((p) => {
+                const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
+                const displayPrice = getProductPrice(p, currentTier);
+                const stockAvailable = p.stock_filled ?? p.stock ?? 0;
+
+                return (
+                  <Pressable
+                    key={p.id || p._id}
+                    style={styles.productCard}
+                    onPress={() => addToCart(p)}
+                  >
+                    <Text style={styles.productTitle}>{p.name}</Text>
+                    <Text style={styles.productPrice}>
+                      Rp {displayPrice.toLocaleString("id-ID")}
+                    </Text>
+                    <Text style={styles.productStock}>
+                      Stok Isi: {stockAvailable}
+                    </Text>
+                    <View style={styles.addCartBadge}>
+                      <Icon name="add" size={16} color="#fff" />
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           </ScrollView>
 
-          {/* Keranjang Transaksi dengan Kontrol Kurang (-) dan Tambah (+) */}
           {cart.length > 0 && (
             <View style={styles.cartFooter}>
               <Text style={styles.cartHeaderTitle}>
@@ -233,7 +267,6 @@ export default function PosScreen() {
                       </Text>
                     </View>
 
-                    {/* Tombol Kontrol Qty Kurang (-) & Tambah (+) */}
                     <View style={styles.qtyControl}>
                       <Pressable
                         onPress={() => updateQty(idx, -1)}
