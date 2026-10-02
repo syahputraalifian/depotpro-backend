@@ -90,12 +90,15 @@ export default function DriverScreen() {
 
     setSubmitting(true);
     try {
-      const payload = {
-        id: editingId || undefined,
-        name: formData.name,
-        phone: formData.phone,
-        vehicle_number: formData.vehicle_number,
+      const payload: any = {
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        vehicle_number: formData.vehicle_number.trim(),
       };
+
+      if (editingId) {
+        payload.id = editingId;
+      }
 
       const postApi = typeof api?.post === "function" ? api.post : null;
       if (postApi) {
@@ -106,13 +109,12 @@ export default function DriverScreen() {
       setModalVisible(false);
       fetchDrivers();
     } catch (e: any) {
-      showToast(e?.message || "Gagal menyimpan data driver");
+      showToast(e?.message || e?.detail || "Gagal menyimpan data driver");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // FITUR HAPUS DRIVER
   const handleDeleteDriver = async (target?: any) => {
     const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
     if (!id) return;

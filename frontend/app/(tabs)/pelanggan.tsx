@@ -92,13 +92,16 @@ export default function PelangganScreen() {
 
     setSubmitting(true);
     try {
-      const payload = {
-        id: editingId || undefined,
-        name: formData.name,
-        phone: formData.phone,
-        address: formData.address,
-        tier: formData.tier,
+      const payload: any = {
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        address: formData.address.trim(),
+        tier: formData.tier || "eceran",
       };
+
+      if (editingId) {
+        payload.id = editingId;
+      }
 
       const postApi = typeof api?.post === "function" ? api.post : null;
       if (postApi) {
@@ -109,13 +112,12 @@ export default function PelangganScreen() {
       setModalVisible(false);
       fetchCustomers();
     } catch (e: any) {
-      showToast(e?.message || "Gagal menyimpan data pelanggan");
+      showToast(e?.message || e?.detail || "Gagal menyimpan data pelanggan");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // FITUR HAPUS PELANGGAN
   const handleDeleteCustomer = async (target?: any) => {
     const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
     if (!id) return;

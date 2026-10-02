@@ -56,13 +56,11 @@ async def delete_document_by_id(collection, item_id: str) -> bool:
     
     clean_id = str(item_id).strip()
     
-    # Pencocokan ganda: field 'id' (UUID string) atau '_id' (String)
     or_conditions = [
         {"id": clean_id},
         {"_id": clean_id}
     ]
     
-    # Hanya konversi ke ObjectId JIKA string tepat 24-karakter hex
     if len(clean_id) == 24 and ObjectId.is_valid(clean_id):
         try:
             or_conditions.append({"_id": ObjectId(clean_id)})
@@ -146,7 +144,7 @@ async def get_dashboard():
         return {"status": "error", "revenue": 0, "transactions_count": 0, "low_stock_count": 0, "recent_transactions": [], "low_stock_items": []}
 
 # ==========================================
-# ENDPOINT PRODUK (CRUD & DELETE)
+# ENDPOINT PRODUK
 # ==========================================
 @app.get("/products")
 @app.get("/api/products")
@@ -182,7 +180,7 @@ async def delete_product(id: str):
     return {"success": True, "status": "success", "message": "Data produk berhasil dihapus"}
 
 # ==========================================
-# ENDPOINT TRANSAKSI / LAPORAN / FINANCE
+# ENDPOINT TRANSAKSI / LAPORAN
 # ==========================================
 @app.get("/reports")
 @app.get("/api/reports")
@@ -230,7 +228,7 @@ async def delete_finance_report(id: str):
     return {"success": True, "status": "success", "message": "Data laporan berhasil dihapus"}
 
 # ==========================================
-# ENDPOINT PELANGGAN & DRIVER
+# ENDPOINT PELANGGAN (GET, POST, DELETE)
 # ==========================================
 @app.get("/customers")
 @app.get("/api/customers")
@@ -245,13 +243,31 @@ async def get_customers():
         customers.append(doc)
     return customers
 
+@app.post("/customers")
+@app.post("/api/customers")
+async def create_or_update_customer(payload: Dict[str, Any] = Body(...)):
+    item_id = payload.get("id") or str(uuid.uuid4())
+    payload["id"] = item_id
+    payload["updated_at"] = datetime.utcnow().isoformat()
+    if "created_at" not in payload:
+        payload["created_at"] = datetime.utcnow().isoformat()
+
+    await db.customers.update_one({"id": item_id}, {"$set": payload}, upsert=True)
+    return {"success": True, "data": payload}
+
 @app.delete("/customers/{id}")
 @app.delete("/api/customers/{id}")
 async def delete_customer(id: str):
+    if not id or id == "undefined":
+        raise HTTPException(status_code=400, detail="Format ID tidak valid")
+
     if await delete_document_by_id(db.customers, id):
         return {"success": True, "message": "Data pelanggan berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Data pelanggan tidak ditemukan")
 
+# ==========================================
+# ENDPOINT DRIVER (GET, POST, DELETE)
+# ==========================================
 @app.get("/drivers")
 @app.get("/api/drivers")
 async def get_drivers():
@@ -265,9 +281,24 @@ async def get_drivers():
         drivers.append(doc)
     return drivers
 
+@app.post("/drivers")
+@app.post("/api/drivers")
+async def create_or_update_driver(payload: Dict[str, Any] = Body(...)):
+    item_id = payload.get("id") or str(uuid.uuid4())
+    payload["id"] = item_id
+    payload["updated_at"] = datetime.utcnow().isoformat()
+    if "created_at" not in payload:
+        payload["created_at"] = datetime.utcnow().isoformat()
+
+    await db.drivers.update_one({"id": item_id}, {"$set": payload}, upsert=True)
+    return {"success": True, "data": payload}
+
 @app.delete("/drivers/{id}")
 @app.delete("/api/drivers/{id}")
 async def delete_driver(id: str):
+    if not id or id == "undefined":
+        raise HTTPException(status_code=400, detail="Format ID tidak valid")
+
     if await delete_document_by_id(db.drivers, id):
         return {"success": True, "message": "Data driver berhasil dihapus"}
     raise HTTPException(status_code=404, detail="Data driver tidak ditemukan")
