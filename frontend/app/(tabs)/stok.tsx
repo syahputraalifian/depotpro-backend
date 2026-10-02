@@ -180,30 +180,31 @@ export default function StokScreen() {
         ? target
         : target?.id || target?._id || editingId;
 
-    if (!idToDelete) {
-      Alert.alert("Error", "ID Produk tidak ditemukan");
+    if (!idToDelete || idToDelete === "undefined") {
+      Alert.alert("Gagal", "ID Produk tidak valid atau tidak ditemukan");
       return;
     }
 
-    Alert.alert("Konfirmasi Hapus", "Yakin ingin menghapus produk ini dari database?", [
+    Alert.alert("Konfirmasi Hapus", "Apakah Anda yakin ingin menghapus produk ini?", [
       { text: "Batal", style: "cancel" },
       {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
           setSubmitting(true);
-          setProducts((prev) => prev.filter((item) => (item.id || item._id) !== idToDelete));
-          setModalVisible(false);
-
           try {
             const delApi = typeof api?.delete === "function" ? api.delete : null;
             if (delApi) {
-              await delApi(`/products/${idToDelete}`);
+              const res = await delApi(`/products/${idToDelete}`);
+              if (res) {
+                setProducts((prev) => prev.filter((p) => p.id !== idToDelete && p._id !== idToDelete));
+                setModalVisible(false);
+                showToast("Produk berhasil dihapus");
+                fetchProducts();
+              }
             }
-            showToast("Produk berhasil dihapus");
-            fetchProducts();
           } catch (e: any) {
-            console.log("Error delete product:", e);
+            Alert.alert("Error", e?.message || "Gagal menghapus produk");
           } finally {
             setSubmitting(false);
           }
@@ -287,7 +288,7 @@ export default function StokScreen() {
                       Kategori: {(p.category || "LPG").toUpperCase()}
                     </Text>
                   </View>
-                  <Pressable onPress={() => handleDelete(p.id || p)} style={{ padding: 6 }}>
+                  <Pressable onPress={() => handleDelete(p)} style={{ padding: 6 }}>
                     <Icon name="trash-outline" size={22} color="#e11d48" />
                   </Pressable>
                 </View>

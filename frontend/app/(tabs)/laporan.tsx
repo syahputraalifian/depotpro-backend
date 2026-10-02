@@ -84,8 +84,8 @@ export default function LaporanScreen() {
         ? target
         : target?.id || target?._id;
 
-    if (!txId) {
-      Alert.alert("Error", "ID Transaksi tidak ditemukan");
+    if (!txId || txId === "undefined") {
+      Alert.alert("Gagal", "ID Transaksi tidak valid atau tidak ditemukan");
       return;
     }
 
@@ -95,20 +95,21 @@ export default function LaporanScreen() {
         text: "HAPUS",
         style: "destructive",
         onPress: async () => {
-          setReportData((prev: any) => ({
-            ...prev,
-            data: (prev.data || []).filter((item: any) => (item.id || item._id) !== txId),
-          }));
-
           try {
             const delApi = typeof api?.delete === "function" ? api.delete : null;
             if (delApi) {
-              await delApi(`/reports/${txId}`);
+              const res = await delApi(`/reports/${txId}`);
+              if (res) {
+                setReportData((prev: any) => ({
+                  ...prev,
+                  data: (prev.data || []).filter((item: any) => item.id !== txId && item._id !== txId),
+                }));
+                showToast("Riwayat transaksi terhapus");
+                fetchReports();
+              }
             }
-            showToast("Riwayat transaksi terhapus");
-            fetchReports();
           } catch (e: any) {
-            console.log("Error delete tx:", e);
+            Alert.alert("Error", e?.message || "Gagal menghapus transaksi");
           }
         },
       },
@@ -194,7 +195,7 @@ export default function LaporanScreen() {
                 </Text>
               </View>
               <Text style={styles.txAmount}>{safeRupiah(tx?.total_amount || 0)}</Text>
-              <Pressable onPress={() => handleDeleteTx(tx.id || tx)} style={{ paddingLeft: 12 }}>
+              <Pressable onPress={() => handleDeleteTx(tx)} style={{ paddingLeft: 12 }}>
                 <Icon name="trash-outline" size={22} color="#e11d48" />
               </Pressable>
             </View>
