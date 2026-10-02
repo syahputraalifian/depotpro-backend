@@ -74,74 +74,20 @@ export default function PosScreen() {
     fetchData();
   }, []);
 
-  // FUNGSI LENGKAP PENENTUAN HARGA SESUAI SKEMA BACKEND (Refill / Complete / Tier)
-  const getProductPrice = (product: any, customerTier: string = "eceran") => {
-    if (!product) return 0;
-
-    const tier = (customerTier || "eceran").toLowerCase();
-
-    // 1. Cek Tier Prices khusus jika ada
-    if (product.tier_prices && typeof product.tier_prices === "object") {
-      const tierVal = product.tier_prices[tier] ?? product.tier_prices["eceran"];
-      if (tierVal !== undefined && tierVal !== null && Number(tierVal) > 0) {
-        return Number(tierVal);
-      }
-    }
-
-    // 2. Cek kandidat harga sesuai field asli di database MongoDB
-    const priceCandidates = [
-      product.price_refill,      // Harga Isi Ulang
-      product.selling_price,     // Harga Jual Utama
-      product.price,             // Harga Standard
-      product.price_complete,    // Harga Perdana / Lengkap
-      product.base_price,
-      product.harga_jual,
-      product.harga
-    ];
-
-    for (const val of priceCandidates) {
-      if (val !== undefined && val !== null && Number(val) > 0) {
-        return Number(val);
-      }
-    }
-
-    return 0;
-  };
-
   const addToCart = (product: any) => {
     const pId = product.id || product._id;
-    const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
-    const activePrice = getProductPrice(product, currentTier);
-    const maxStock = product.stock_filled ?? product.stock ?? 999;
-
     const existingIndex = cart.findIndex((item) => (item.id || item._id) === pId);
 
     if (existingIndex > -1) {
       const updated = [...cart];
-      if (updated[existingIndex].qty < maxStock) {
-        updated[existingIndex].qty += 1;
-        updated[existingIndex].price = activePrice;
-        setCart(updated);
-      } else {
-        showToast("Stok produk tidak mencukupi");
-      }
+      updated[existingIndex].qty += 1;
+      setCart(updated);
     } else {
-      if (maxStock > 0) {
-        setCart([
-          ...cart,
-          {
-            ...product,
-            price: activePrice,
-            qty: 1,
-            stock_filled: maxStock,
-          },
-        ]);
-      } else {
-        showToast("Stok produk habis");
-      }
+      setCart([...cart, { ...product, qty: 1 }]);
     }
   };
 
+  // FITUR KURANG DAN TAMBAH QTY DI KERANJANG
   const updateQty = (index: number, delta: number) => {
     const updated = [...cart];
     const newQty = updated[index].qty + delta;
@@ -149,11 +95,6 @@ export default function PosScreen() {
     if (newQty <= 0) {
       updated.splice(index, 1);
     } else {
-      const maxStock = updated[index].stock_filled ?? 999;
-      if (newQty > maxStock) {
-        showToast("Melebihi batas stok tersedia");
-        return;
-      }
       updated[index].qty = newQty;
     }
     setCart(updated);
@@ -187,7 +128,7 @@ export default function PosScreen() {
         await postApi("/transactions", payload);
       }
 
-      showToast("Transaksi berhasil disimpan & stok terpotong!");
+      showToast("Transaksi berhasil disimpan!");
       setCart([]);
       fetchData();
     } catch (e: any) {
@@ -236,64 +177,50 @@ export default function PosScreen() {
       ) : (
         <View style={{ flex: 1, flexDirection: "column" }}>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
-            <Text style={styles.sectionTitle}>Pilih Produk Depot (Sinkron Stok)</Text>
+            <Text style={styles.sectionTitle}>Pilih Produk Depot</Text>
             <View style={styles.productGrid}>
-              {products.map((p) => {
-                const currentTier = selectedCustomer?.tier || selectedCustomer?.type || "eceran";
-                const displayPrice = getProductPrice(p, currentTier);
-                const stockAvailable = p.stock_filled ?? p.stock ?? 0;
-
-                return (
-                  <Pressable
-                    key={p.id || p._id}
-                    style={styles.productCard}
-                    onPress={() => addToCart(p)}
-                  >
-                    <Text style={styles.productTitle}>{p.name}</Text>
-                    <Text style={styles.productPrice}>
-                      Rp {displayPrice.toLocaleString("id-ID")}
-                    </Text>
-                    <Text style={styles.productStock}>
-                      Stok Isi: {stockAvailable}
-                    </Text>
-                    <View style={styles.addCartBadge}>
-                      <Icon name="add" size={16} color="#fff" />
-                    </View>
-                  </Pressable>
-                );
-              })}
+              {products.map((p) => (
+                <Pressable
+                  key={p.id || p._id}
+                  style={styles.productCard}
+                  onPress={() => addToCart(p)}
+                >
+                  <Text style={styles.productTitle}>{p.name}</Text>
+                  <Text style={styles.productPrice}>
+                    Rp {(p.price || 0).toLocaleString("id-ID")}
+                  </Text>
+                  <Text style={styles.productStock}>
+                    Stok Isi: {p.stock_filled || 0}
+                  </Text>
+                  <View style={styles.addCartBadge}>
+                    <Icon name="add" size={16} color="#fff" />
+                  </View>
+                </Pressable>
+              ))}
             </View>
           </ScrollView>
 
           {cart.length > 0 && (
             <View style={styles.cartFooter}>
               <Text style={styles.cartHeaderTitle}>
-                Item Keranjang ({cart.reduce((sum, i) => sum + i.qty, 0)} Pcs)
+                Item Transaksi ({cart.reduce((sum, i) => sum + i.qty, 0)})
               </Text>
 
-              <ScrollView style={{ maxHeight: 150, marginVertical: 6 }}>
+              <ScrollView style={{ maxHeight: 120, marginVertical: 6 }}>
                 {cart.map((item, idx) => (
                   <View key={item.id || item._id || idx} style={styles.cartRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cartItemName}>{item.name}</Text>
-                      <Text style={styles.cartItemSub}>
-                        Rp {(item.price || 0).toLocaleString("id-ID")} / item
-                      </Text>
-                    </View>
+                    <Text style={{ flex: 1, fontSize: 13, color: colors.onSurface }}>
+                      {item.name}
+                    </Text>
 
+                    {/* Tombol Kurang (-) dan Tambah (+) */}
                     <View style={styles.qtyControl}>
-                      <Pressable
-                        onPress={() => updateQty(idx, -1)}
-                        style={styles.qtyBtn}
-                      >
-                        <Icon name="remove" size={14} color={colors.onSurface} />
+                      <Pressable onPress={() => updateQty(idx, -1)} style={styles.qtyBtn}>
+                        <Text style={styles.qtyBtnText}>-</Text>
                       </Pressable>
                       <Text style={styles.qtyText}>{item.qty}</Text>
-                      <Pressable
-                        onPress={() => updateQty(idx, 1)}
-                        style={styles.qtyBtn}
-                      >
-                        <Icon name="add" size={14} color={colors.onSurface} />
+                      <Pressable onPress={() => updateQty(idx, 1)} style={styles.qtyBtn}>
+                        <Text style={styles.qtyBtnText}>+</Text>
                       </Pressable>
                     </View>
 
@@ -400,14 +327,13 @@ const useStyles = makeStyles((c) => ({
   addCartBadge: { position: "absolute", bottom: 10, right: 10, backgroundColor: c.brandPrimary, width: 24, height: 24, borderRadius: 12, justifyContent: "center", alignItems: "center" },
   cartFooter: { backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.border, padding: 14, shadowColor: "#000", shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.1, elevation: 8 },
   cartHeaderTitle: { fontSize: 13, fontWeight: "800", color: c.onSurface },
-  cartRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
-  cartItemName: { fontSize: 13, fontWeight: "700", color: c.onSurface },
-  cartItemSub: { fontSize: 11, color: c.muted, marginTop: 2 },
-  qtyControl: { flexDirection: "row", alignItems: "center", gap: 6, marginHorizontal: 10, backgroundColor: c.surfaceSecondary, padding: 4, borderRadius: 8, borderWidth: 1, borderColor: c.border },
-  qtyBtn: { width: 26, height: 26, backgroundColor: c.surface, borderRadius: 6, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: c.border },
-  qtyText: { fontSize: 13, fontWeight: "800", color: c.onSurface, minWidth: 20, textAlign: "center" },
-  cartItemPrice: { fontSize: 13, fontWeight: "800", color: c.brandPrimary, minWidth: 80, textAlign: "right" },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: c.border },
+  cartRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6 },
+  qtyControl: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 8 },
+  qtyBtn: { width: 24, height: 24, backgroundColor: c.surfaceSecondary, borderRadius: 4, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: c.border },
+  qtyBtnText: { fontWeight: "800", fontSize: 14, color: c.onSurface },
+  qtyText: { fontSize: 13, fontWeight: "700", color: c.onSurface },
+  cartItemPrice: { fontSize: 12, fontWeight: "700", color: c.onSurface },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: c.border },
   totalLabel: { fontSize: 14, fontWeight: "800", color: c.onSurface },
   totalValue: { fontSize: 18, fontWeight: "800", color: c.brandPrimary },
   checkoutBtn: { backgroundColor: c.brandPrimary, paddingVertical: 12, borderRadius: 10, alignItems: "center", marginTop: 10 },
