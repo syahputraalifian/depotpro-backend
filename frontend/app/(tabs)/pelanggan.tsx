@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TextInput,
   ActivityIndicator,
   Modal,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Icon from "@react-native-vector-icons/ionicons";
@@ -22,6 +23,7 @@ export default function PelangganScreen() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
   const [modalVisible, setModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -30,9 +32,7 @@ export default function PelangganScreen() {
     name: "",
     phone: "",
     address: "",
-    type: "eceran",
-    gallon_deposit_qty: "0",
-    lpg_deposit_qty: "0",
+    tier: "eceran",
   });
 
   const showToast = (msg: string) => {
@@ -68,31 +68,23 @@ export default function PelangganScreen() {
 
   const openAddModal = () => {
     setEditingId(null);
-    setFormData({
-      name: "",
-      phone: "",
-      address: "",
-      type: "eceran",
-      gallon_deposit_qty: "0",
-      lpg_deposit_qty: "0",
-    });
+    setFormData({ name: "", phone: "", address: "", tier: "eceran" });
     setModalVisible(true);
   };
 
   const openEditModal = (c: any) => {
-    setEditingId(c.id);
+    const cId = typeof c === "string" ? c : c?._id || c?.id;
+    setEditingId(cId);
     setFormData({
       name: c.name || "",
       phone: c.phone || "",
       address: c.address || "",
-      type: c.type || "eceran",
-      gallon_deposit_qty: String(c.gallon_deposit_qty || 0),
-      lpg_deposit_qty: String(c.lpg_deposit_qty || 0),
+      tier: c.tier || "eceran",
     });
     setModalVisible(true);
   };
 
-  const handleSaveCustomer = async () => {
+  const handleSave = async () => {
     if (!formData.name.trim()) {
       showToast("Nama pelanggan wajib diisi");
       return;
@@ -105,9 +97,7 @@ export default function PelangganScreen() {
         name: formData.name,
         phone: formData.phone,
         address: formData.address,
-        type: formData.type,
-        gallon_deposit_qty: parseInt(formData.gallon_deposit_qty) || 0,
-        lpg_deposit_qty: parseInt(formData.lpg_deposit_qty) || 0,
+        tier: formData.tier,
       };
 
       const postApi = typeof api?.post === "function" ? api.post : null;
@@ -115,42 +105,62 @@ export default function PelangganScreen() {
         await postApi("/customers", payload);
       }
 
-      showToast(editingId ? "Pelanggan diperbarui!" : "Pelanggan disimpan!");
+      showToast(editingId ? "Data pelanggan diperbarui" : "Pelanggan baru ditambahkan");
       setModalVisible(false);
       fetchCustomers();
     } catch (e: any) {
-      showToast("Gagal menyimpan pelanggan");
+      showToast(e?.message || "Gagal menyimpan data pelanggan");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDeleteCustomer = async (id: string) => {
-    setSubmitting(true);
-    try {
-      const delApi = typeof api?.delete === "function" ? api.delete : null;
-      if (delApi) await delApi(`/customers/${id}`);
-      showToast("Pelanggan berhasil dihapus");
-      setModalVisible(false);
-      fetchCustomers();
-    } catch (e) {
-      showToast("Gagal menghapus pelanggan");
-    } finally {
-      setSubmitting(false);
-    }
+  // FITUR HAPUS PELANGGAN
+  const handleDeleteCustomer = async (target?: any) => {
+    const id = typeof target === "string" ? target : target?._id || target?.id || editingId;
+    if (!id) return;
+
+    Alert.alert(
+      "Konfirmasi Hapus",
+      "Apakah Anda yakin ingin menghapus data pelanggan ini?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const delApi = typeof api?.delete === "function" ? api.delete : null;
+              if (delApi) {
+                const response = await delApi(`/customers/${id}`);
+                if (response) {
+                  showToast("Data pelanggan berhasil dihapus");
+                  setModalVisible(false);
+                  fetchCustomers();
+                }
+              }
+            } catch (e: any) {
+              showToast(e?.message || e?.detail || "Gagal menghapus pelanggan");
+            }
+          },
+        },
+      ]
+    );
   };
 
-  const filteredCustomers = customers.filter((c) =>
-    (c.name || "").toLowerCase().includes(search.toLowerCase()) ||
-    (c.address || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredCustomers = useMemo(() => {
+    return customers.filter((c) =>
+      (c.name || "").toLowerCase().includes(search.toLowerCase()) ||
+      (c.phone || "").includes(search)
+    );
+  }, [customers, search]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Manajemen Pelanggan</Text>
-        <Pressable onPress={openAddModal} style={styles.addBtn}>
-          <Icon name="person-add" size={20} color="#fff" />
+        <Pressable onPress={openAddModal} style={styles.addHeaderBtn}>
+          <Icon name="person-add" size={22} color="#fff" />
         </Pressable>
       </View>
 
@@ -159,7 +169,7 @@ export default function PelangganScreen() {
           <Icon name="search" size={18} color={colors.muted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Cari pelanggan / alamat..."
+            placeholder="Cari pelanggan / nomor HP..."
             value={search}
             onChangeText={setSearch}
             placeholderTextColor={colors.muted}
@@ -170,32 +180,30 @@ export default function PelangganScreen() {
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={styles.loadingText}>Memuat Data Pelanggan...</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
-          {filteredCustomers.map((c, idx) => (
-            <Pressable key={c.id || idx} style={styles.card} onPress={() => openEditModal(c)}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
+          {filteredCustomers.map((c) => (
+            <Pressable
+              key={c._id || c.id || c.name}
+              style={styles.card}
+              onPress={() => openEditModal(c)}
+            >
               <View style={styles.cardHeader}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.custName}>{c.name}</Text>
-                  <Text style={styles.custMeta}>
-                    📞 {c.phone || "-"} | 📍 {c.address || "Tidak ada alamat"}
-                  </Text>
+                  <Text style={styles.cardTitle}>{c.name}</Text>
+                  <Text style={styles.cardSub}>{c.phone || "Tidak ada nomor HP"}</Text>
                 </View>
-                <View style={styles.typeTag}>
-                  <Text style={styles.typeTagText}>
-                    {(c.type || "Eceran").toUpperCase()}
-                  </Text>
-                </View>
+                <Pressable onPress={() => handleDeleteCustomer(c)} style={{ padding: 6 }}>
+                  <Icon name="trash-outline" size={22} color="#e11d48" />
+                </Pressable>
               </View>
 
-              <View style={styles.depositRow}>
-                <Text style={styles.depositText}>
-                  Galon Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.gallon_deposit_qty || 0}</Text>
-                </Text>
-                <Text style={styles.depositText}>
-                  Tabung LPG Dipinjam: <Text style={{ fontWeight: "800", color: colors.brandPrimary }}>{c.lpg_deposit_qty || 0}</Text>
-                </Text>
+              {c.address ? <Text style={styles.addressText}>{c.address}</Text> : null}
+
+              <View style={styles.tierTag}>
+                <Text style={styles.tierText}>Tipe: {(c.tier || "eceran").toUpperCase()}</Text>
               </View>
             </Pressable>
           ))}
@@ -210,20 +218,20 @@ export default function PelangganScreen() {
                 {editingId ? "Edit Pelanggan" : "Tambah Pelanggan Baru"}
               </Text>
               <Pressable onPress={() => setModalVisible(false)}>
-                <Icon name="close" size={22} color={colors.onSurface} />
+                <Icon name="close" size={24} color={colors.onSurface} />
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
+            <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
               <Text style={styles.inputLabel}>Nama Pelanggan</Text>
               <TextInput
                 style={styles.input}
                 value={formData.name}
                 onChangeText={(val) => setFormData({ ...formData, name: val })}
-                placeholder="Nama Toko / Perorangan"
+                placeholder="Contoh: Toko Berkah / Pak Ahmad"
               />
 
-              <Text style={styles.inputLabel}>Nomor WhatsApp/Telepon</Text>
+              <Text style={styles.inputLabel}>Nomor HP / WhatsApp</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="phone-pad"
@@ -234,55 +242,12 @@ export default function PelangganScreen() {
 
               <Text style={styles.inputLabel}>Alamat Lengkap</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { height: 70 }]}
+                multiline
                 value={formData.address}
                 onChangeText={(val) => setFormData({ ...formData, address: val })}
-                placeholder="Jalan, RT/RW, No. Rumah"
+                placeholder="Alamat pengiriman depot"
               />
-
-              <Text style={styles.inputLabel}>Kategori Tipe Pelanggan</Text>
-              <View style={styles.typeSelector}>
-                {["eceran", "warung", "pangkalan", "korporat"].map((t) => (
-                  <Pressable
-                    key={t}
-                    style={[
-                      styles.typeChip,
-                      formData.type === t && styles.typeChipActive,
-                    ]}
-                    onPress={() => setFormData({ ...formData, type: t })}
-                  >
-                    <Text
-                      style={[
-                        styles.typeChipText,
-                        formData.type === t && styles.typeChipTextActive,
-                      ]}
-                    >
-                      {t.toUpperCase()}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Pinjaman Galon</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.gallon_deposit_qty}
-                    onChangeText={(val) => setFormData({ ...formData, gallon_deposit_qty: val })}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Pinjaman LPG</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.lpg_deposit_qty}
-                    onChangeText={(val) => setFormData({ ...formData, lpg_deposit_qty: val })}
-                  />
-                </View>
-              </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -298,10 +263,10 @@ export default function PelangganScreen() {
               <Pressable
                 style={[styles.saveBtn, submitting && { opacity: 0.6 }]}
                 disabled={submitting}
-                onPress={handleSaveCustomer}
+                onPress={handleSave}
               >
                 <Text style={styles.saveBtnText}>
-                  {submitting ? "Memproses..." : "Simpan Pelanggan"}
+                  {submitting ? "Menyimpan..." : "Simpan Data"}
                 </Text>
               </Pressable>
             </View>
@@ -316,30 +281,25 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: c.brandPrimary },
   headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
-  addBtn: { padding: 4 },
-  searchSection: { padding: 12, backgroundColor: c.surface },
+  addHeaderBtn: { padding: 4 },
+  searchSection: { paddingHorizontal: 12, paddingTop: 10, backgroundColor: c.surface },
   searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: c.surfaceSecondary, borderRadius: 10, paddingHorizontal: 10, height: 40, borderWidth: 1, borderColor: c.border },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 13, color: c.onSurface },
   centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  loadingText: { marginTop: 8, fontSize: 13, color: c.muted },
   card: { backgroundColor: c.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, marginBottom: 10 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  custName: { fontSize: 15, fontWeight: "800", color: c.onSurface },
-  custMeta: { fontSize: 12, color: c.muted, marginTop: 4 },
-  typeTag: { backgroundColor: c.brandPrimary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  typeTagText: { color: "#fff", fontSize: 10, fontWeight: "800" },
-  depositRow: { flexDirection: "row", justifyContent: "space-between", backgroundColor: c.surfaceSecondary, padding: 8, borderRadius: 8 },
-  depositText: { fontSize: 11, color: c.muted },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  cardTitle: { fontSize: 15, fontWeight: "800", color: c.onSurface },
+  cardSub: { fontSize: 12, color: c.muted, marginTop: 2 },
+  addressText: { fontSize: 12, color: c.onSurface, marginTop: 8 },
+  tierTag: { marginTop: 10, alignSelf: "flex-start", backgroundColor: c.surfaceSecondary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  tierText: { fontSize: 10, fontWeight: "700", color: c.brandPrimary },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   modalContent: { backgroundColor: c.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "85%" },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: c.border },
   modalTitle: { fontSize: 16, fontWeight: "800", color: c.onSurface },
   inputLabel: { fontSize: 12, fontWeight: "700", color: c.onSurface, marginTop: 4 },
   input: { height: 42, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 10, color: c.onSurface, backgroundColor: c.surfaceSecondary },
-  typeSelector: { flexDirection: "row", gap: 6, marginVertical: 4 },
-  typeChip: { flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border, alignItems: "center", backgroundColor: c.surfaceSecondary },
-  typeChipActive: { backgroundColor: c.brandPrimary, borderColor: c.brandPrimary },
-  typeChipText: { fontSize: 10, fontWeight: "700", color: c.muted },
-  typeChipTextActive: { color: "#fff" },
   modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: c.border, gap: 8 },
   deleteBtn: { backgroundColor: "#e11d48", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
   deleteBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
