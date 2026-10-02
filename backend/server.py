@@ -317,6 +317,110 @@ async def get_reports():
         }
     except Exception as e:
         return {"daily": 0, "monthly": 0, "yearly": 0, "total_transactions": 0, "data": []}
+
+        # ====================================================================
+# API PELANGGAN & DRIVER HANDLERS
+# ====================================================================
+
+class CustomerModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    phone: str
+    address: str
+    type: str = "eceran"  # eceran, warung, pangkalan, korporat
+    gallon_deposit_qty: int = 0
+    lpg_deposit_qty: int = 0
+
+@app.get("/customers")
+@app.get("/api/customers")
+async def get_customers():
+    try:
+        customers = []
+        cursor = db.customers.find({}, {"_id": 0})
+        async for doc in cursor:
+            customers.append(doc)
+        return customers
+    except Exception as e:
+        return []
+
+@app.post("/customers")
+@app.post("/api/customers")
+async def create_customer(cust: CustomerModel):
+    try:
+        cust_data = cust.dict()
+        if not cust_data.get("id"):
+            cust_data["id"] = f"cust-{uuid.uuid4().hex[:8]}"
+            
+        await db.customers.update_one(
+            {"id": cust_data["id"]},
+            {"$set": cust_data},
+            upsert=True
+        )
+        return {"status": "success", "data": cust_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class DeliveryOrderModel(BaseModel):
+    driver_name: str
+    customer_id: str
+    customer_name: str
+    address: str
+    items: List[TransactionItemModel]
+    total_amount: float
+    status: str = "pending"  # pending, delivering, completed, cancelled
+
+@app.get("/deliveries")
+@app.get("/api/deliveries")
+async def get_deliveries():
+    try:
+        deliveries = []
+        cursor = db.deliveries.find({}, {"_id": 0}).sort("created_at", -1)
+        async for doc in cursor:
+            deliveries.append(doc)
+        return deliveries
+    except Exception as e:
+        return []
+
+@app.post("/deliveries")
+@app.post("/api/deliveries")
+async def create_delivery(delivery: DeliveryOrderModel):
+    try:
+        deliv_data = delivery.dict()
+        deliv_data["id"] = f"deliv-{uuid.uuid4().hex[:8]}"
+        deliv_data["created_at"] = datetime.utcnow().isoformat()
+
+        await db.deliveries.insert_one(deliv_data)
+        if "_id" in deliv_data:
+            del deliv_data["_id"] = None
+
+        return {"status": "success", "data": deliv_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/deliveries/{delivery_id}/status")
+@app.post("/api/deliveries/{delivery_id}/status")
+async def update_delivery_status(delivery_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        new_status = payload.get("status", "completed")
+        
+        # Update status pengiriman
+        res = await db.deliveries.find_one_and_update(
+            {"id": delivery_id},
+            {"$set": {"status": new_status}},
+            return_document=True
+        )
+        
+        # Jika pengiriman selesai, potong stok di MongoDB secara otomatis
+        if new_status == "completed" and res:
+            for item in res.get("items", []):
+                await db.products.update_one(
+                    {"id": item.get("product_id")},
+                    {"$inc": {"stock_filled": -item.get("qty", 0), "total_sold": item.get("qty", 0)}}
+                )
+
+        return {"status": "success", "message": f"Status updated to {new_status}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # ====================================================================
 # CATCH-ALL WILDCARD
 # ====================================================================
