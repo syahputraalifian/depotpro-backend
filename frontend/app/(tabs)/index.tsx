@@ -6,12 +6,16 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
-import { api } from "@/src/api";
+import { api, TOKEN_KEY } from "@/src/api";
+import { storage } from "@/src/utils/storage";
 import * as formatModule from "@/src/format";
+import * as uiModule from "@/src/ui";
 
 const safeRupiah = (val: number) => {
   const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
@@ -29,6 +33,7 @@ export default function DashboardScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,6 +46,40 @@ export default function DashboardScreen() {
     recent_transactions: [],
     low_stock_items: [],
   });
+
+  const showToast = (msg: string) => {
+    try {
+      const useToastHook = (uiModule as any)?.useToast;
+      if (typeof useToastHook === "function") {
+        const toast = useToastHook();
+        if (typeof toast === "function") toast(msg);
+        else if (toast?.show) toast.show(msg);
+      }
+    } catch (e) {}
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      "Konfirmasi Keluar",
+      "Apakah Anda yakin ingin keluar dari akun ini?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Keluar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await storage.secureRemove(TOKEN_KEY);
+              showToast("Berhasil keluar akun");
+              router.replace("/login");
+            } catch (e) {
+              showToast("Gagal melakukan log out");
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const fetchDashboardData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -83,12 +122,20 @@ export default function DashboardScreen() {
           <Text style={styles.headerGreeting}>DepotPro ERP</Text>
           <Text style={styles.headerTitle}>Ringkasan Bisnis</Text>
         </View>
-        <Pressable
-          onPress={() => fetchDashboardData(true)}
-          style={styles.refreshBtn}
-        >
-          <Icon name="refresh-outline" size={20} color="#fff" />
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable
+            onPress={() => fetchDashboardData(true)}
+            style={styles.headerBtn}
+          >
+            <Icon name="refresh-outline" size={20} color="#fff" />
+          </Pressable>
+          <Pressable
+            onPress={handleLogout}
+            style={[styles.headerBtn, { backgroundColor: "#e11d48" }]}
+          >
+            <Icon name="log-out-outline" size={20} color="#fff" />
+          </Pressable>
+        </View>
       </View>
 
       {loading ? (
@@ -226,7 +273,7 @@ const useStyles = makeStyles((c) => ({
   },
   headerGreeting: { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "600" },
   headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
-  refreshBtn: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 8 },
+  headerBtn: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 8 },
   centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 8, fontSize: 13, color: c.muted },
   mainCard: {

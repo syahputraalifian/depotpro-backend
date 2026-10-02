@@ -1,76 +1,88 @@
-import React, { useState } from "react";
-import { View, Text, ScrollView, Pressable, Alert } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
 import Icon from "@react-native-vector-icons/ionicons";
 import { makeStyles, useTheme } from "@/src/theme";
-import { TOKEN_KEY } from "@/src/api";
-import { storage } from "@/src/utils/storage";
-import * as uiModule from "@/src/ui";
+import { api } from "@/src/api";
+import * as formatModule from "@/src/format";
+
+const safeRupiah = (val: number) => {
+  const formatFunc = (formatModule as any)?.rupiah || (formatModule as any)?.default;
+  if (typeof formatFunc === "function") {
+    try {
+      return formatFunc(val);
+    } catch {
+      return `Rp ${val || 0}`;
+    }
+  }
+  return `Rp ${(val || 0).toLocaleString("id-ID")}`;
+};
 
 export default function SetoranScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
 
-  const showToast = (msg: string) => {
+  const [loading, setLoading] = useState(true);
+  const [settlements, setSettlements] = useState<any[]>([]);
+
+  const fetchSettlements = async () => {
+    setLoading(true);
     try {
-      const useToastHook = (uiModule as any)?.useToast;
-      if (typeof useToastHook === "function") {
-        const toast = useToastHook();
-        if (typeof toast === "function") toast(msg);
-        else if (toast?.show) toast.show(msg);
+      const getApi = typeof api?.get === "function" ? api.get : null;
+      if (getApi) {
+        const res = await getApi("/settlements");
+        const list = Array.isArray(res) ? res : res?.data || [];
+        setSettlements(list);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("Error fetching settlements:", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      "Konfirmasi Keluar",
-      "Apakah Anda yakin ingin keluar dari akun ini?",
-      [
-        { text: "Batal", style: "cancel" },
-        {
-          text: "Keluar",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await storage.secureRemove(TOKEN_KEY);
-              showToast("Berhasil keluar akun");
-              router.replace("/login");
-            } catch (e) {
-              showToast("Gagal melakukan log out");
-            }
-          },
-        },
-      ]
-    );
-  };
+  useEffect(() => {
+    fetchSettlements();
+  }, []);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Setoran & Pengaturan</Text>
-        <Pressable onPress={handleLogout} style={styles.logoutHeaderBtn}>
-          <Icon name="log-out-outline" size={20} color="#fff" />
+        <Text style={styles.headerTitle}>Setoran Kasir & Driver</Text>
+        <Pressable onPress={fetchSettlements} style={styles.refreshBtn}>
+          <Icon name="refresh-outline" size={20} color="#fff" />
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Manajemen Akun Sesi</Text>
-          <Text style={styles.cardSub}>
-            Keluar dari aplikasi untuk berpindah role (Owner, Kasir, Gudang, Driver).
-          </Text>
-
-          <Pressable style={styles.logoutCardBtn} onPress={handleLogout}>
-            <Icon name="log-out-outline" size={18} color="#fff" />
-            <Text style={styles.logoutCardBtnText}>Log Out (Keluar Akun)</Text>
-          </Pressable>
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={styles.loadingText}>Memuat Data Setoran...</Text>
         </View>
-      </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
+          {settlements.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Icon name="wallet-outline" size={48} color={colors.muted} />
+              <Text style={styles.emptyText}>Belum ada riwayat setoran kasir hari ini.</Text>
+            </View>
+          ) : (
+            settlements.map((s, idx) => (
+              <View key={s.id || s._id || idx} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle}>{s.user_name || "Kasir / Driver"}</Text>
+                  <Text style={styles.cardAmount}>{safeRupiah(s.amount || 0)}</Text>
+                </View>
+                <Text style={styles.cardDate}>
+                  Status: {(s.status || "pending").toUpperCase()} •{" "}
+                  {s.created_at ? new Date(s.created_at).toLocaleString("id-ID") : "Hari Ini"}
+                </Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -86,28 +98,21 @@ const useStyles = makeStyles((c) => ({
     backgroundColor: c.brandPrimary,
   },
   headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
-  logoutHeaderBtn: {
-    padding: 6,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    borderRadius: 8,
-  },
+  refreshBtn: { padding: 4 },
+  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  loadingText: { marginTop: 8, fontSize: 13, color: c.muted },
+  emptyContainer: { alignItems: "center", justifyContent: "center", paddingTop: 40 },
+  emptyText: { marginTop: 8, fontSize: 13, color: c.muted },
   card: {
     backgroundColor: c.surface,
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: c.border,
+    marginBottom: 10,
   },
-  cardTitle: { fontSize: 15, fontWeight: "800", color: c.onSurface },
-  cardSub: { fontSize: 12, color: c.muted, marginTop: 4, marginBottom: 16 },
-  logoutCardBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#e11d48",
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  logoutCardBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  cardTitle: { fontSize: 14, fontWeight: "800", color: c.onSurface },
+  cardAmount: { fontSize: 15, fontWeight: "800", color: c.brandPrimary },
+  cardDate: { fontSize: 11, color: c.muted, marginTop: 4 },
 }));
