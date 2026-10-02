@@ -7,40 +7,22 @@ from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
 from pydantic import BaseModel
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # ==========================================
-# KONFIGURASI
+# KONFIGURASI & MONGODB INTEGRATION
 # ==========================================
 JWT_SECRET = os.getenv("JWT_SECRET", "depotpro_super_secret_key_123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
-app = FastAPI(title="GasGalon ERP Backend")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "depotpro_db")
 
-# Inisialisasi memory state produk agar tidak kosong/hilang saat app berjalan
-@app.on_event("startup")
-async def startup_event():
-    if not hasattr(app.state, "products"):
-        app.state.products = [
-            {
-                "id": "prod-default-1",
-                "name": "Gas LPG 3 Kg",
-                "category": "lpg",
-                "is_returnable": True,
-                "cost_price": 16000,
-                "freight_cost": 1000,
-                "depreciation_cost": 500,
-                "price_eceran": 20000,
-                "price_warung": 18500,
-                "price_pangkalan": 17500,
-                "price_korporat": 17000,
-                "deposit_amount": 100000,
-                "stock_filled": 50,
-                "stock_empty": 20,
-                "reorder_point": 10,
-                "total_sold": 0
-            }
-        ]
+client = AsyncIOMotorClient(MONGO_URI)
+db = client[DB_NAME]
+
+app = FastAPI(title="GasGalon ERP Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +45,55 @@ def create_access_token(data: dict):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
+
+# Inisialisasi Seed Data di MongoDB jika database masih kosong
+@app.on_event("startup")
+async def startup_event():
+    try:
+        count = await db.products.count_documents({})
+        if count == 0:
+            initial_products = [
+                {
+                    "id": "prod-default-1",
+                    "name": "Gas LPG 3 Kg",
+                    "category": "lpg",
+                    "is_returnable": True,
+                    "cost_price": 16000,
+                    "freight_cost": 1000,
+                    "depreciation_cost": 500,
+                    "price_eceran": 20000,
+                    "price_warung": 18500,
+                    "price_pangkalan": 17500,
+                    "price_korporat": 17000,
+                    "deposit_amount": 100000,
+                    "stock_filled": 50,
+                    "stock_empty": 20,
+                    "reorder_point": 10,
+                    "total_sold": 0
+                },
+                {
+                    "id": "prod-default-2",
+                    "name": "Air Galon Brand 19L",
+                    "category": "galon_brand",
+                    "is_returnable": True,
+                    "cost_price": 14000,
+                    "freight_cost": 1000,
+                    "depreciation_cost": 500,
+                    "price_eceran": 20000,
+                    "price_warung": 18000,
+                    "price_pangkalan": 17000,
+                    "price_korporat": 16500,
+                    "deposit_amount": 50000,
+                    "stock_filled": 30,
+                    "stock_empty": 15,
+                    "reorder_point": 10,
+                    "total_sold": 0
+                }
+            ]
+            await db.products.insert_many(initial_products)
+            print("🌱 [SEED] Berhasil menginisialisasi produk awal ke MongoDB Atlas")
+    except Exception as e:
+        print(f"⚠️ [MONGO WARNING] Gagal menginisialisasi DB: {e}")
 
 # ==========================================
 # AUTH ENDPOINTS
@@ -96,25 +127,23 @@ async def login(payload: Dict[str, Any] = Body(...)):
     raise HTTPException(status_code=401, detail="Email atau password salah")
 
 # ==========================================
-# ROUTE UTAMA DASHBOARD & PROFIL
+# DASHBOARD & PROFIL
 # ==========================================
-DASHBOARD_DATA = {
-    "status": "success",
-    "revenue": 0,
-    "transactions_count": 0,
-    "low_stock_count": 0,
-    "recent_transactions": [],
-    "low_stock_items": [],
-    "daily_revenue": 0,
-    "monthly_revenue": 0,
-    "total_sales": 0,
-    "data": []
-}
-
 @app.get("/dashboard")
 @app.get("/api/dashboard")
 async def get_dashboard():
-    return DASHBOARD_DATA
+    return {
+        "status": "success",
+        "revenue": 0,
+        "transactions_count": 0,
+        "low_stock_count": 0,
+        "recent_transactions": [],
+        "low_stock_items": [],
+        "daily_revenue": 0,
+        "monthly_revenue": 0,
+        "total_sales": 0,
+        "data": []
+    }
 
 @app.get("/users/me")
 @app.get("/api/users/me")
@@ -125,23 +154,12 @@ async def get_dashboard():
 async def get_me():
     return {"email": "owner@gasgalon.id", "name": "Pemilik Depot", "role": "owner"}
 
-@app.get("/transactions")
-@app.get("/api/transactions")
-@app.get("/sales")
-@app.get("/api/sales")
-async def get_transactions():
-    return []
-
-@app.get("/reports")
-@app.get("/api/reports")
-async def get_reports():
-    return {"daily": 0, "monthly": 0, "yearly": 0, "data": []}
-
 # ====================================================================
-# API PRODUCT HANDLERS (Harus Berada di Atas Catch-All)
+# API PRODUCT HANDLERS (MongoDB Persistent)
 # ====================================================================
 
 class ProductModel(BaseModel):
+    id: Optional[str] = None
     name: str
     category: str = "lpg"
     is_returnable: bool = True
@@ -157,30 +175,41 @@ class ProductModel(BaseModel):
     stock_empty: int = 0
     reorder_point: int = 10
 
-@app.post("/products")
-@app.post("/api/products")
-async def create_product_real(product: ProductModel):
-    if not hasattr(app.state, "products"):
-        app.state.products = []
-        
-    new_product = product.dict()
-    new_product["id"] = str(uuid.uuid4())
-    new_product["total_sold"] = 0
-    
-    app.state.products.append(new_product)
-    print(f"[SUCCESS] Produk berhasil ditambahkan: {new_product['name']}")
-    return new_product
-
 @app.get("/products")
 @app.get("/api/products")
 async def get_products_real():
-    if not hasattr(app.state, "products"):
-        app.state.products = []
-    return app.state.products
+    try:
+        products = []
+        cursor = db.products.find({}, {"_id": 0})
+        async for doc in cursor:
+            products.append(doc)
+        return products
+    except Exception as e:
+        print(f"Error fetching products: {e}")
+        return []
 
+@app.post("/products")
+@app.post("/api/products")
+async def create_product_real(product: ProductModel):
+    try:
+        new_product = product.dict()
+        if not new_product.get("id"):
+            new_product["id"] = f"prod-{uuid.uuid4().hex[:8]}"
+        new_product["total_sold"] = new_product.get("total_sold", 0)
+
+        # Simpan/update ke MongoDB (upsert)
+        await db.products.update_one(
+            {"id": new_product["id"]},
+            {"$set": new_product},
+            upsert=True
+        )
+        print(f"[SUCCESS MONGO] Produk berhasil disimpan: {new_product['name']}")
+        return new_product
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal menyimpan ke MongoDB: {str(e)}")
 
 # ====================================================================
-# CATCH-ALL WILDCARD (Hanya untuk route lain yang benar-benar tidak ada)
+# CATCH-ALL WILDCARD
 # ====================================================================
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
