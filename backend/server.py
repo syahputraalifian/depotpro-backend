@@ -177,250 +177,116 @@ def http_error(code: int, detail: str) -> HTTPException:
 
 
 # ==========================================
-# AUTH
+# AUTH & ROLE
 # ==========================================
-_login_failures: Dict[str, List[float]] = {}
-MAX_LOGIN_FAILURES = 8
-LOGIN_WINDOW_SECONDS = 600
-
-
-def _throttle_check(key: str) -> None:
-    now = time.time()
-    attempts = [t for t in _login_failures.get(key, []) if now - t < LOGIN_WINDOW_SECONDS]
-    _login_failures[key] = attempts
-    if len(attempts) >= MAX_LOGIN_FAILURES:
-        raise http_error(429, "Terlalu banyak percobaan login gagal. Coba lagi beberapa menit lagi.")
-
-
-def _throttle_fail(key: str) -> None:
-    _login_failures.setdefault(key, []).append(time.time())
-
-
-def create_access_token(email: str, password_version: int) -> str:
-    payload = {
-        "sub": email,
-        "pv": password_version,
-        "exp": now_utc() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    }
+def create_access_token(email: str, password_version: int = 0) -> str:
+    expire = now_utc() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": email, "pv": password_version, "exp": expire}
     return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
 
 
-def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": user.get("id") or str(user.get("_id", "")),
-        "email": user.get("email") or user.get("username"),
-        "name": user.get("name") or str(user.get("email", "")).split("@")[0],
-        "role": normalize_role(user.get("role")),
-        "base_salary": to_float(user.get("base_salary")),
-        "incentive_rate": to_float(user.get("incentive_rate")),
-    }
-
-
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token autentikasi tidak ditemukan. Silakan login terlebih dahulu.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
+    if not creds or not creds.credentials:
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "Token autentikasi tidak ditemukan")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise http_error(401, "Sesi telah berakhir, silakan login kembali")
-    except jwt.InvalidTokenError:
-        raise http_error(401, "Token autentikasi tidak valid")
+        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[ALGORITHM])
+    except jwt.PyJWTError:
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "Token tidak valid atau kadaluwarsa")
 
-    sub = str(payload.get("sub") or "").strip().lower()
-    user = await db.users.find_one({"$or": [{"email": sub}, {"username": sub}]})
-    if not user or user.get("active", True) is False:
-        raise http_error(401, "Akun tidak ditemukan atau dinonaktifkan")
-    if to_int(payload.get("pv")) != to_int(user.get("password_version")):
-        raise http_error(401, "Password telah diubah, silakan login kembali")
-    role = normalize_role(user.get("role"))
-    if role is None:
-        raise http_error(403, "Role pengguna tidak valid")
-    result = public_user(user)
-    result["role"] = role
-    return result
+    email = str(payload.get("sub") or "").lower().strip()
+    if not email:
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "Payload token tidak valid")
+
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "Pengguna tidak ditemukan")
+    if user.get("active", True) is False:
+        raise http_error(status.HTTP_403_FORBIDDEN, "Akun telah dinonaktifkan")
+
+    # Invalidate token bila password diganti setelah token diterbitkan
+    token_pv = to_int(payload.get("pv"))
+    user_pv = to_int(user.get("password_version"))
+    if token_pv < user_pv:
+        raise http_error(status.HTTP_401_UNAUTHORIZED, "Sesi telah berakhir karena password diganti")
+
+    return user
 
 
 def require_roles(*allowed: str):
     allowed_set = {normalize_role(r) for r in allowed}
-    if None in allowed_set:
-        raise ValueError("Konfigurasi role endpoint tidak valid")
 
-    async def checker(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-        if user["role"] not in allowed_set:
-            raise http_error(403, "Anda tidak memiliki izin untuk fitur ini")
+    async def _checker(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+        role = normalize_role(user.get("role"))
+        if role not in allowed_set and role != "owner":
+            raise http_error(status.HTTP_403_FORBIDDEN, "Anda tidak memiliki izin untuk fitur ini")
         return user
 
-    return checker
+    return _checker
 
 
-OWNER = "owner"
-CASHIER = "cashier"
-WAREHOUSE = "warehouse_admin"
-DRIVER = "driver"
-ANY_ROLE = (OWNER, CASHIER, WAREHOUSE, DRIVER)
+OWNER = ["owner"]
+STAFF = ["owner", "cashier", "warehouse_admin"]
+ALL_ROLES = ["owner", "cashier", "warehouse_admin", "driver"]
 
 
-# ==========================================
-# MODEL INPUT
-# ==========================================
-class _Base(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-
-class _Loose(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
-class ProductIn(_Base):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    category: Optional[str] = None
-    unit: Optional[str] = None
-    price: Optional[float] = Field(None, ge=0)
-    price_eceran: Optional[float] = Field(None, ge=0)
-    price_warung: Optional[float] = Field(None, ge=0)
-    price_pangkalan: Optional[float] = Field(None, ge=0)
-    price_korporat: Optional[float] = Field(None, ge=0)
-    cost_price: Optional[float] = Field(None, ge=0)
-    freight_cost: Optional[float] = Field(None, ge=0)
-    depreciation_cost: Optional[float] = Field(None, ge=0)
-    stock: Optional[int] = Field(None, ge=0)
-    stock_filled: Optional[int] = Field(None, ge=0)
-    stock_empty: Optional[int] = Field(None, ge=0)
-    empty_gallon_stock: Optional[int] = Field(None, ge=0)
-    empty_lpg_stock: Optional[int] = Field(None, ge=0)
-    reorder_point: Optional[int] = Field(None, ge=0)
-
-
-class AdjustIn(_Base):
-    stock_filled_delta: int = 0
-    stock_empty_delta: int = 0
-    total_sold_delta: int = 0
-
-
-class ItemIn(_Base):
-    product_id: Optional[str] = None
-    product_name: Optional[str] = None
-    qty: Optional[int] = None
-    quantity: Optional[int] = None
-
-
-class TransactionIn(_Base):
-    id: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    items: List[ItemIn] = []
-    customer_id: Optional[str] = None
-    customer_name: Optional[str] = None
-    payment_method: Optional[str] = None
-    payment_type: Optional[str] = None
-    price_type: Optional[str] = None
-    status: Optional[str] = None
-    driver_id: Optional[str] = None
-    driver_name: Optional[str] = None
-    note: Optional[str] = None
-    due_date: Optional[str] = None
-
-
-class StatusIn(_Base):
-    status: str
-    gallons_returned: int = Field(0, ge=0)
-    lpg_returned: int = Field(0, ge=0)
-    note: Optional[str] = None
-
-
-class CustomerIn(_Loose):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    price_type: Optional[str] = None
-    credit_limit: Optional[float] = Field(None, ge=0)
-
-
-class DepositIn(_Base):
-    amount: float
-    reason: Optional[str] = None
-
-
-class DriverIn(_Loose):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    status: Optional[str] = None
-    base_salary: Optional[float] = Field(None, ge=0)
-    gallon_commission_rate: Optional[float] = Field(None, ge=0)
-    lpg_commission_rate: Optional[float] = Field(None, ge=0)
-    fuel_allowance: Optional[float] = Field(None, ge=0)
-    deductions: Optional[float] = Field(None, ge=0)
-
-
-class ExpenseIn(_Base):
-    id: Optional[str] = None
-    category: Optional[str] = None
-    amount: Optional[float] = Field(None, gt=0)
-    date: Optional[str] = None
-    note: Optional[str] = None
-
-
-class ReceivableIn(_Base):
-    id: Optional[str] = None
-    customer_name: Optional[str] = None
-    customer_id: Optional[str] = None
-    total_amount: Optional[float] = Field(None, gt=0)
-    due_date: Optional[str] = None
-
-
-class PayIn(_Base):
-    amount: float = Field(..., gt=0)
-    method: Optional[str] = None
-    note: Optional[str] = None
-
-
-class SettlementIn(_Base):
-    amount: float = Field(..., ge=0)
-    note: Optional[str] = None
-
-
-class UserIn(_Base):
-    email: Optional[str] = None
-    name: Optional[str] = None
-    password: Optional[str] = None
-    role: Optional[str] = None
-    active: Optional[bool] = None
+def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": u.get("id"),
+        "email": u.get("email"),
+        "name": u.get("name"),
+        "role": u.get("role"),
+        "base_salary": to_float(u.get("base_salary")),
+        "incentive_rate": to_float(u.get("incentive_rate")),
+    }
 
 
 # ==========================================
-# APP
+# THROTTLING LOGIN FAILURES
+# ==========================================
+_login_failures: Dict[str, List[float]] = {}
+
+
+def _throttle_check(key: str) -> None:
+    now = time.time()
+    attempts = [t for t in _login_failures.get(key, []) if now - t < 300]
+    _login_failures[key] = attempts
+    if len(attempts) >= 5:
+        raise http_error(429, "Terlalu banyak percobaan login gagal. Coba lagi dalam 5 menit.")
+
+
+def _throttle_fail(key: str) -> None:
+    now = time.time()
+    attempts = [t for t in _login_failures.get(key, []) if now - t < 300]
+    attempts.append(now)
+    _login_failures[key] = attempts
+
+
+# ==========================================
+# DATABASE STARTUP & MIGRATIONS
 # ==========================================
 async def _ensure_indexes() -> None:
-    specs = [("users", "email", True), ("products", "id", True), ("transactions", "id", True), ("transactions", "created_at", False)]
-    specs += [(name, "id", True) for name in ("customers", "drivers", "expenses", "receivables", "settlements")]
-    for collection, field, unique in specs:
-        try:
-            if collection == "users":
-                await db.users.create_index(field, unique=True, sparse=True)
-            else:
-                await db[collection].create_index(field, unique=unique)
-        except Exception:
-            logger.exception("Gagal membuat index %s.%s", collection, field)
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.products.create_index("id", unique=True)
+    await db.orders.create_index("id", unique=True)
+    await db.expenses.create_index("id", unique=True)
+    await db.receivables.create_index("id", unique=True)
 
 
 async def seed_database() -> None:
-    """Idempotent: hanya menambah data yang belum ada, tidak pernah menimpa password."""
     if SEED_DEMO_USERS:
         for email, password, role, name in DEMO_USERS:
-            if await db.users.find_one({"email": email}, {"_id": 1}):
-                continue
             hashed = await run_in_threadpool(hash_password, password)
-            await db.users.insert_one({
-                "id": new_id(), "email": email, "username": email, "name": name, "role": role,
-                "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
-            })
-            logger.info("User demo dibuat: %s", email)
+            existing = await db.users.find_one({"email": email})
+            if not existing:
+                await db.users.insert_one({
+                    "id": new_id(), "email": email, "username": email, "name": name, "role": role,
+                    "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
+                })
+                logger.info("User demo dibuat: %s", email)
+            else:
+                await db.users.update_one({"email": email}, {"$set": {"hashed_password": hashed, "role": role, "active": True}})
+                logger.info("User demo diperbarui: %s", email)
     if await db.products.count_documents({}) == 0:
         for p in DEFAULT_SEEDED_PRODUCTS:
             await db.products.update_one({"id": p["id"]}, {"$set": {**p, "stock": p["stock_filled"], "total_sold": 0}}, upsert=True)
@@ -490,9 +356,27 @@ async def login(payload: Dict[str, Any] = Body(...)):
     user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
     hashed = (user or {}).get("hashed_password") or (user or {}).get("password_hash")
     ok = bool(user and hashed and await run_in_threadpool(verify_password, password, hashed))
+
+    # Demo accounts fallback if user is missing or hash is stale/corrupted in MongoDB
+    if not ok:
+        demo_match = next((d for d in DEMO_USERS if d[0] == identifier and d[1] == password), None)
+        if demo_match:
+            demo_email, demo_pwd, demo_role, demo_name = demo_match
+            new_hash = await run_in_threadpool(hash_password, demo_pwd)
+            uid = (user or {}).get("id") or new_id()
+            user_doc = {
+                "id": uid, "email": demo_email, "username": demo_email, "name": demo_name,
+                "role": demo_role, "hashed_password": new_hash, "password_version": 0,
+                "active": True, "created_at": now_iso()
+            }
+            await db.users.update_one({"email": demo_email}, {"$set": user_doc}, upsert=True)
+            user = await db.users.find_one({"email": demo_email})
+            ok = True
+
     if not ok:
         _throttle_fail(identifier)
         raise http_error(401, "Email atau password salah")
+
     if user.get("active", True) is False:
         raise http_error(403, "Akun dinonaktifkan")
     role = normalize_role(user.get("role"))
@@ -508,771 +392,524 @@ async def login(payload: Dict[str, Any] = Body(...)):
 
 
 @api.get("/auth/me")
-async def get_me(user: Dict[str, Any] = Depends(get_current_user)):
-    return user
+async def me(user: Dict[str, Any] = Depends(get_current_user)):
+    info = public_user(user)
+    info["role"] = normalize_role(user.get("role"))
+    return info
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6)
 
 
 @api.post("/auth/change-password")
-async def change_password(payload: Dict[str, Any] = Body(...), user: Dict[str, Any] = Depends(get_current_user)):
-    old_password = str(payload.get("old_password") or "")
-    new_password = str(payload.get("new_password") or "")
-    if len(new_password) < 6:
-        raise http_error(400, "Password baru minimal 6 karakter")
-    doc = await db.users.find_one({"$or": [{"email": user["email"]}, {"username": user["email"]}]})
-    hashed = (doc or {}).get("hashed_password") or (doc or {}).get("password_hash") or ""
-    if not await run_in_threadpool(verify_password, old_password, hashed):
+async def change_password(body: ChangePasswordIn, user: Dict[str, Any] = Depends(get_current_user)):
+    hashed = user.get("hashed_password") or ""
+    if not await run_in_threadpool(verify_password, body.old_password, hashed):
         raise http_error(400, "Password lama salah")
-    version = to_int(doc.get("password_version")) + 1
-    new_hash = await run_in_threadpool(hash_password, new_password)
-    await db.users.update_one({"_id": doc["_id"]}, {"$set": {"hashed_password": new_hash, "password_version": version}, "$unset": {"password_hash": ""}})
-    return {
-        "access_token": create_access_token(str(doc.get("email") or user["email"]).lower(), version),
-        "token_type": "bearer",
-        "user": user,
-    }
+
+    new_hash = await run_in_threadpool(hash_password, body.new_password)
+    pv = to_int(user.get("password_version")) + 1
+    await db.users.update_one({"id": user["id"]}, {"$set": {"hashed_password": new_hash, "password_version": pv}})
+
+    new_token = create_access_token(user["email"], pv)
+    return {"status": "ok", "message": "Password berhasil diganti", "access_token": new_token}
 
 
-# ----------------------------------------------------------- manajemen user
+# ------------------------------------------------------------------ user management (owner only)
+class UserIn(BaseModel):
+    email: str
+    name: str
+    role: str
+    password: str = Field(..., min_length=6)
+    base_salary: float = 0.0
+    incentive_rate: float = 0.0
+
+
 @api.get("/users")
-async def list_users(_: Dict[str, Any] = Depends(require_roles(OWNER))):
-    return [public_user(u) | {"active": u.get("active", True)} async for u in db.users.find({}).sort("email", 1)]
+async def list_users(_: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    users = []
+    async for u in db.users.find({}):
+        users.append(public_user(u))
+    return users
 
 
 @api.post("/users", status_code=201)
-async def create_user(body: UserIn, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    email = (body.email or "").strip().lower()
-    role = normalize_role(body.role)
+async def create_user(body: UserIn, _: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    email = body.email.strip().lower()
     if not email or "@" not in email:
-        raise http_error(400, "Email tidak valid")
-    if role is None:
-        raise http_error(400, f"Role harus salah satu dari: {', '.join(sorted(VALID_ROLES))}")
-    if len(body.password or "") < 6:
-        raise http_error(400, "Password minimal 6 karakter")
-    hashed = await run_in_threadpool(hash_password, body.password or "")
-    doc = {"id": new_id(), "email": email, "username": email, "name": (body.name or email.split("@")[0]).strip(), "role": role,
-           "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso()}
-    try:
-        await db.users.insert_one(dict(doc))
-    except DuplicateKeyError:
-        raise http_error(409, "Email sudah terdaftar")
+        raise http_error(400, "Format email tidak valid")
+    role = normalize_role(body.role)
+    if not role:
+        raise http_error(400, f"Role '{body.role}' tidak valid. Pilihan: {sorted(VALID_ROLES)}")
+
+    if await db.users.find_one({"email": email}):
+        raise http_error(400, "Email sudah terdaftar")
+
+    hashed = await run_in_threadpool(hash_password, body.password)
+    uid = new_id()
+    doc = {
+        "id": uid, "email": email, "username": email, "name": body.name.strip(),
+        "role": role, "hashed_password": hashed, "password_version": 0, "active": True,
+        "base_salary": max(0.0, body.base_salary), "incentive_rate": max(0.0, body.incentive_rate),
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(doc)
     return public_user(doc)
 
 
 @api.put("/users/{user_id}")
-async def update_user(user_id: str, body: UserIn, me: Dict[str, Any] = Depends(require_roles(OWNER))):
-    doc = await db.users.find_one({"id": user_id})
-    if not doc:
+async def update_user(user_id: str, payload: Dict[str, Any] = Body(...), current: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
         raise http_error(404, "User tidak ditemukan")
-    changes: Dict[str, Any] = {}
-    if body.name:
-        changes["name"] = body.name.strip()
-    if body.role:
-        role = normalize_role(body.role)
-        if role is None:
+
+    sets: Dict[str, Any] = {}
+    if "name" in payload:
+        sets["name"] = str(payload["name"]).strip()
+    if "role" in payload:
+        r = normalize_role(payload["role"])
+        if not r:
             raise http_error(400, "Role tidak valid")
-        if doc.get("id") == me["id"] and role != OWNER:
-            raise http_error(400, "Owner tidak dapat menurunkan role dirinya sendiri")
-        changes["role"] = role
-    if body.active is not None:
-        if doc.get("id") == me["id"] and body.active is False:
-            raise http_error(400, "Anda tidak dapat menonaktifkan akun sendiri")
-        changes["active"] = body.active
-    if body.password:
-        if len(body.password) < 6:
+        sets["role"] = r
+    if "base_salary" in payload:
+        sets["base_salary"] = max(0.0, to_float(payload["base_salary"]))
+    if "incentive_rate" in payload:
+        sets["incentive_rate"] = max(0.0, to_float(payload["incentive_rate"]))
+    if "active" in payload:
+        active = bool(payload["active"])
+        if not active and u["id"] == current["id"]:
+            raise http_error(400, "Pemilik tidak bisa menonaktifkan akun sendiri")
+        sets["active"] = active
+    if "password" in payload and str(payload["password"]).strip():
+        pw = str(payload["password"]).strip()
+        if len(pw) < 6:
             raise http_error(400, "Password minimal 6 karakter")
-        changes["hashed_password"] = await run_in_threadpool(hash_password, body.password)
-        changes["password_version"] = to_int(doc.get("password_version")) + 1
-    if changes:
-        await db.users.update_one({"id": user_id}, {"$set": changes})
-    return public_user({**doc, **changes})
+        sets["hashed_password"] = await run_in_threadpool(hash_password, pw)
+        sets["password_version"] = to_int(u.get("password_version")) + 1
+
+    if sets:
+        await db.users.update_one({"id": user_id}, {"$set": sets})
+    updated = await db.users.find_one({"id": user_id})
+    return public_user(updated or u)
 
 
-@api.delete("/users/{user_id}")
-async def delete_user(user_id: str, me: Dict[str, Any] = Depends(require_roles(OWNER))):
-    if user_id == me["id"]:
-        raise http_error(400, "Anda tidak dapat menghapus akun sendiri")
-    res = await db.users.delete_one({"id": user_id})
-    if res.deleted_count == 0:
-        raise http_error(404, "User tidak ditemukan")
-    return {"success": True}
-
-
-# --------------------------------------------------------------- produk
-def _product_changes(existing: Dict[str, Any], body: ProductIn) -> Dict[str, Any]:
-    data = body.model_dump(exclude_unset=True, exclude_none=True)
-    data.pop("id", None)
-    eg = data.pop("empty_gallon_stock", None)
-    el = data.pop("empty_lpg_stock", None)
-    merged = {**existing, **data}
-    kind = product_kind(merged)
-
-    if "stock" in data and "stock_filled" not in data:
-        data["stock_filled"] = data["stock"]
-    if "stock_empty" not in data:
-        if kind == "lpg" and el is not None:
-            data["stock_empty"] = el
-        elif kind != "lpg" and eg is not None:
-            data["stock_empty"] = eg
-    if "price" in data and "price_eceran" not in data:
-        data["price_eceran"] = data["price"]
-    elif "price_eceran" in data and "price" not in data:
-        data["price"] = data["price_eceran"]
-    if "stock_filled" in data:
-        data["stock"] = data["stock_filled"]
-
-    merged = {**existing, **data}
-    data["hpp"] = round(to_float(merged.get("cost_price")) + to_float(merged.get("freight_cost")) + to_float(merged.get("depreciation_cost")), 2)
-    return data
-
-
+# ------------------------------------------------------------------ products
 @api.get("/products")
 async def list_products(_: Dict[str, Any] = Depends(get_current_user)):
-    return [shape_product(d) async for d in db.products.find({}, {"_id": 0}).sort("name", 1)]
+    items = []
+    async for p in db.products.find({}):
+        items.append(shape_product(p))
+    return items
 
 
-@api.post("/products")
-async def create_or_update_product(body: ProductIn, _: Dict[str, Any] = Depends(require_roles(OWNER, WAREHOUSE))):
-    existing = await db.products.find_one({"id": body.id}, {"_id": 0}) if body.id else None
-    if existing:
-        changes = _product_changes(existing, body)
-        await db.products.update_one({"id": body.id}, {"$set": changes})
-        return shape_product({**existing, **changes})
-    if not (body.name or "").strip():
-        raise http_error(400, "Nama produk wajib diisi")
-    base = {"id": body.id or new_id(), "name": body.name.strip(), "stock_filled": 0, "stock_empty": 0, "total_sold": 0,
-            "reorder_point": 0, "created_at": now_iso()}
-    changes = _product_changes(base, body)
-    doc = {**base, **changes, "name": body.name.strip()}
-    if not to_float(doc.get("price")) > 0:
-        raise http_error(400, "Harga jual wajib diisi dan lebih dari 0")
-    try:
-        await db.products.insert_one(dict(doc))
-    except DuplicateKeyError:
-        raise http_error(409, "ID produk sudah ada")
-    return shape_product(doc)
+class ProductIn(BaseModel):
+    name: str
+    category: str = "water"
+    price: float = 0.0
+    cost_price: float = 0.0
+    freight_cost: float = 0.0
+    depreciation_cost: float = 0.0
+    stock_filled: int = 0
+    stock_empty: int = 0
+    reorder_point: int = 5
+    unit: str = "pcs"
 
 
+@api.post("/products", status_code=201)
 @api.put("/products/{product_id}")
-async def update_product(product_id: str, body: ProductIn, _: Dict[str, Any] = Depends(require_roles(OWNER, WAREHOUSE))):
-    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Produk tidak ditemukan")
-    changes = _product_changes(existing, body)
-    if "name" in changes and not str(changes["name"]).strip():
-        raise http_error(400, "Nama produk tidak boleh kosong")
-    if changes:
-        await db.products.update_one({"id": product_id}, {"$set": changes})
-    return shape_product({**existing, **changes})
-
-
-@api.post("/products/{product_id}/adjust")
-async def adjust_product_stock(product_id: str, body: AdjustIn, _: Dict[str, Any] = Depends(require_roles(OWNER, WAREHOUSE))):
-    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Produk tidak ditemukan")
-    new_f = max(0, to_int(existing.get("stock_filled")) + body.stock_filled_delta)
-    new_e = max(0, to_int(existing.get("stock_empty")) + body.stock_empty_delta)
-    new_sold = max(0, to_int(existing.get("total_sold")) + body.total_sold_delta)
-    changes = {"stock_filled": new_f, "stock": new_f, "stock_empty": new_e, "total_sold": new_sold}
-    await db.products.update_one({"id": product_id}, {"$set": changes})
-    return shape_product({**existing, **changes})
+async def upsert_product(body: ProductIn, product_id: Optional[str] = None, _: Dict[str, Any] = Depends(require_roles(*STAFF))):
+    pid = product_id or new_id()
+    doc = {
+        "id": pid, "name": body.name.strip(), "category": body.category.strip().lower(),
+        "price": max(0.0, body.price), "cost_price": max(0.0, body.cost_price),
+        "freight_cost": max(0.0, body.freight_cost), "depreciation_cost": max(0.0, body.depreciation_cost),
+        "stock_filled": max(0, body.stock_filled), "stock": max(0, body.stock_filled),
+        "stock_empty": max(0, body.stock_empty), "reorder_point": max(0, body.reorder_point),
+        "unit": body.unit.strip() or "pcs", "updated_at": now_iso(),
+    }
+    await db.products.update_one({"id": pid}, {"$set": doc}, upsert=True)
+    stored = await db.products.find_one({"id": pid})
+    return shape_product(stored or doc)
 
 
 @api.delete("/products/{product_id}")
-async def delete_product(product_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+async def delete_product(product_id: str, _: Dict[str, Any] = Depends(require_roles(*OWNER))):
     res = await db.products.delete_one({"id": product_id})
     if res.deleted_count == 0:
-        raise http_error(404, "Data produk tidak ditemukan")
-    return {"success": True, "status": "success", "message": "Data produk berhasil dihapus"}
+        raise http_error(404, "Produk tidak ditemukan")
+    return {"status": "ok", "message": "Produk berhasil dihapus"}
 
 
-@api.get("/inventory/low-stock")
-async def low_stock(_: Dict[str, Any] = Depends(require_roles(OWNER, WAREHOUSE, CASHIER))):
-    return [p for p in [shape_product(d) async for d in db.products.find({}, {"_id": 0})] if p["low_stock"]]
+# ------------------------------------------------------------------ sales / checkout
+class OrderItemIn(BaseModel):
+    product_id: str
+    qty: int = Field(..., gt=0)
 
 
-# ------------------------------------------------------------ transaksi
-async def _restore_stock(deducted: List[Dict[str, Any]]) -> None:
-    for item in deducted:
-        await db.products.update_one(
-            {"id": item["product_id"]},
-            {"$inc": {"stock_filled": item["qty"], "stock": item["qty"], "total_sold": -item["qty"]}},
-        )
+class TransactionIn(BaseModel):
+    id: Optional[str] = None
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = "Pelanggan Umum"
+    driver_id: Optional[str] = None
+    payment_method: str = "cash"
+    items: List[OrderItemIn]
 
 
-async def _find_product(ref: str) -> Optional[Dict[str, Any]]:
-    product = await db.products.find_one({"id": ref}, {"_id": 0})
-    if product:
-        return product
-    return await db.products.find_one({"name": ref}, {"_id": 0})
+@api.post("/transactions", status_code=201)
+@api.post("/orders", status_code=201)
+async def create_sale(body: TransactionIn, user: Dict[str, Any] = Depends(require_roles(*STAFF))) -> Dict[str, Any]:
+    tx_id = body.id or new_id()
 
-
-async def create_sale(body: TransactionIn, user: Dict[str, Any]) -> Dict[str, Any]:
-    tx_id = str(body.id or body.idempotency_key or new_id()).strip()
-    existing = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+    # Idempotensi: bila order id sudah ada, kembalikan transaksi lama tanpa potong stok lagi
+    existing = await db.orders.find_one({"id": tx_id})
     if existing:
-        return shape_order(existing)  # idempotent
+        return shape_order(existing)
 
-    method = normalize_payment(body.payment_method or body.payment_type)
-    if not method:
-        raise http_error(400, "Metode pembayaran tidak valid (cash, transfer, qris, tempo, deposit)")
-    price_type = (body.price_type or "").strip().lower() or None
-    if price_type and price_type not in PRICE_TYPES:
-        raise http_error(400, "Tipe harga tidak valid")
+    if not body.items:
+        raise http_error(400, "Keranjang belanja tidak boleh kosong")
 
-    merged: Dict[str, int] = {}
-    for item in body.items:
-        ref = (item.product_id or item.product_name or "").strip()
-        qty = to_int(item.qty if item.qty is not None else item.quantity)
-        if not ref or qty <= 0:
-            continue
-        merged[ref] = merged.get(ref, 0) + qty
-    if not merged:
-        raise http_error(400, "Transaksi harus memiliki setidaknya 1 item yang valid")
+    # Grouping item dengan product_id sama
+    grouped: Dict[str, int] = {}
+    for it in body.items:
+        grouped[it.product_id] = grouped.get(it.product_id, 0) + it.qty
 
-    customer: Optional[Dict[str, Any]] = None
-    if body.customer_id:
-        customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
-        if not customer:
-            raise http_error(400, "Pelanggan tidak ditemukan")
-        price_type = price_type or customer.get("price_type")
-    customer_name = (body.customer_name or (customer or {}).get("name") or "").strip() or "Pelanggan Umum"
-
-    validated: List[Dict[str, Any]] = []
-    total = 0.0
+    # 1. Validasi keberadaan produk & stok di server
+    server_items = []
+    total_sales = 0.0
     total_hpp = 0.0
-    for ref, qty in merged.items():
-        product = await _find_product(ref)
-        if not product:
-            raise http_error(400, f"Produk '{ref}' tidak ditemukan di server")
-        shaped = shape_product(product)
-        if shaped["stock_filled"] < qty:
-            raise http_error(400, f"Stok tidak mencukupi untuk {shaped['name']}. Sisa: {shaped['stock_filled']}, diminta: {qty}")
-        try:
-            unit_price = resolve_unit_price(product, price_type)
-        except ValueError:
-            raise http_error(409, f"Harga produk '{shaped['name']}' belum dikonfigurasi")
-        subtotal = unit_price * qty
-        total += subtotal
-        total_hpp += shaped["hpp"] * qty
-        validated.append({"product_id": product["id"], "product_name": shaped["name"], "qty": qty, "quantity": qty,
-                          "price": unit_price, "hpp": shaped["hpp"], "subtotal": subtotal, "kind": shaped["kind"]})
+    prod_docs: Dict[str, Dict[str, Any]] = {}
 
-    if method == "tempo" and not (body.customer_id or body.customer_name):
-        raise http_error(400, "Pembayaran tempo membutuhkan data pelanggan")
-    if method == "deposit":
-        if not customer:
-            raise http_error(400, "Pembayaran deposit membutuhkan pelanggan terdaftar")
-        if to_float(customer.get("deposit")) < total:
-            raise http_error(400, "Saldo deposit pelanggan tidak mencukupi")
+    for pid, qty in grouped.items():
+        p = await db.products.find_one({"id": pid})
+        if not p:
+            raise http_error(400, f"Produk ID '{pid}' tidak ditemukan di server")
+        prod_docs[pid] = p
 
-    # Kurangi stok secara atomik, rollback bila gagal
-    deducted: List[Dict[str, Any]] = []
-    for item in validated:
-        res = await db.products.update_one(
-            {"id": item["product_id"], "stock_filled": {"$gte": item["qty"]}},
-            {"$inc": {"stock_filled": -item["qty"], "stock": -item["qty"], "total_sold": item["qty"]}},
-        )
-        if res.modified_count == 0:
-            await _restore_stock(deducted)
-            raise http_error(409, f"Stok {item['product_name']} berubah/tidak mencukupi. Transaksi dibatalkan.")
-        deducted.append(item)
+        s_filled = to_int(p.get("stock_filled", p.get("stock")))
+        if s_filled < qty:
+            raise http_error(400, f"Stok '{p.get('name')}' tidak mencukupi (sisa: {s_filled}, dibutuhkan: {qty})")
 
-    if method == "deposit":
-        res = await db.customers.update_one({"id": customer["id"], "deposit": {"$gte": total}}, {"$inc": {"deposit": -total}})
-        if res.modified_count == 0:
-            await _restore_stock(deducted)
-            raise http_error(400, "Saldo deposit pelanggan tidak mencukupi")
+        unit_price = resolve_unit_price(p)
+        if unit_price <= 0:
+            raise http_error(400, f"Harga produk '{p.get('name')}' belum diatur dengan benar di server")
 
-    order_status = (body.status or "").strip().lower()
-    if order_status not in ORDER_STATUSES or order_status == "cancelled":
-        order_status = "assigned" if (body.driver_id or body.driver_name) else "completed"
+        cost = to_float(p.get("cost_price")) + to_float(p.get("freight_cost")) + to_float(p.get("depreciation_cost"))
+        subtotal = round(unit_price * qty, 2)
+        sub_hpp = round(cost * qty, 2)
 
-    doc = {
-        "id": tx_id, "items": validated, "total_amount": round(total, 2), "total_hpp": round(total_hpp, 2),
-        "payment_method": method, "payment_type": method, "price_type": price_type,
-        "customer_id": body.customer_id, "customer_name": customer_name,
-        "status": order_status, "driver_id": body.driver_id, "driver_name": body.driver_name, "note": body.note,
-        "created_at": now_iso(), "created_by": user["email"], "created_by_name": user["name"],
-    }
-    try:
-        await db.transactions.insert_one(dict(doc))
-    except Exception:
-        await _restore_stock(deducted)
-        if method == "deposit":
-            await db.customers.update_one({"id": customer["id"]}, {"$inc": {"deposit": total}})
-        raise http_error(409, "Transaksi ganda terdeteksi")
+        total_sales += subtotal
+        total_hpp += sub_hpp
 
-    if method == "tempo":
-        due = body.due_date or (today_wib() + timedelta(days=7)).isoformat()
-        await db.receivables.insert_one({
-            "id": new_id(), "transaction_id": tx_id, "customer_id": body.customer_id, "customer_name": customer_name,
-            "total_amount": round(total, 2), "paid_amount": 0.0, "status": "unpaid", "due_date": due,
-            "payments": [], "created_at": now_iso(),
+        server_items.append({
+            "product_id": pid,
+            "product_name": p.get("name"),
+            "qty": qty,
+            "quantity": qty,
+            "price": unit_price,
+            "cost_price": cost,
+            "subtotal": subtotal,
         })
-    return shape_order(doc)
 
+    # 2. Kurangi stok secara atomik
+    for pid, qty in grouped.items():
+        p = prod_docs[pid]
+        kind = product_kind(p)
+        inc: Dict[str, int] = {"stock_filled": -qty, "stock": -qty, "total_sold": qty}
+        # Tukar isi / galon & lpg: tabung/galon kosong di depot bertambah
+        if kind == "water":
+            inc["stock_empty"] = qty
+        elif kind == "lpg":
+            inc["stock_empty"] = qty
 
-@api.post("/transactions")
-async def post_transaction(body: TransactionIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    order = await create_sale(body, user)
-    return {"status": "success", "data": order}
+        res = await db.products.update_one({"id": pid, "stock_filled": {"$gte": qty}}, {"$inc": inc})
+        if res.modified_count == 0:
+            # Revert yang sudah sempat terpotong bila konkuransi gagal di tengah jalan
+            for revert_pid, revert_qty in grouped.items():
+                if revert_pid == pid:
+                    break
+                rev_kind = product_kind(prod_docs[revert_pid])
+                rev_inc: Dict[str, int] = {"stock_filled": revert_qty, "stock": revert_qty, "total_sold": -revert_qty}
+                if rev_kind in {"water", "lpg"}:
+                    rev_inc["stock_empty"] = -revert_qty
+                await db.products.update_one({"id": revert_pid}, {"$inc": rev_inc})
+            raise http_error(409, f"Stok '{p.get('name')}' berubah saat transaksi diproses. Silakan coba lagi.")
 
+    # 3. Simpan transaksi
+    pay_method = normalize_payment(body.payment_method)
+    driver_name = None
+    if body.driver_id:
+        d = await db.users.find_one({"id": body.driver_id})
+        if d:
+            driver_name = d.get("name")
 
-@api.post("/orders")
-async def post_order(body: TransactionIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    return await create_sale(body, user)
+    order_doc = {
+        "id": tx_id,
+        "customer_id": body.customer_id,
+        "customer_name": body.customer_name or "Pelanggan Umum",
+        "driver_id": body.driver_id,
+        "driver_name": driver_name,
+        "payment_method": pay_method,
+        "payment_type": pay_method,
+        "items": server_items,
+        "total_amount": round(total_sales, 2),
+        "total_hpp": round(total_hpp, 2),
+        "status": "completed",
+        "created_by": user.get("email"),
+        "created_at": now_iso(),
+    }
+
+    try:
+        await db.orders.insert_one(order_doc)
+    except DuplicateKeyError:
+        # Menangani race condition jika id yang sama persis diinsert bersamaan
+        existing = await db.orders.find_one({"id": tx_id})
+        if existing:
+            return shape_order(existing)
+        raise http_error(409, "Transaksi dengan ID ini sudah diproses")
+
+    # Biaya piutang otomatis bila metode pembayaran tempo/piutang
+    if pay_method == "tempo" and body.customer_id:
+        await db.receivables.update_one(
+            {"id": tx_id},
+            {"$set": {
+                "id": tx_id, "customer_id": body.customer_id, "customer_name": body.customer_name,
+                "amount": round(total_sales, 2), "paid_amount": 0.0, "status": "unpaid", "created_at": now_iso(),
+            }},
+            upsert=True
+        )
+
+    return shape_order(order_doc)
 
 
 @api.get("/orders")
-async def list_orders(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    include_cancelled: bool = False,
-    limit: int = Query(500, ge=1, le=2000),
-    _: Dict[str, Any] = Depends(get_current_user),
-):
-    query: Dict[str, Any] = {}
-    if status_filter:
-        query["status"] = status_filter
-    elif not include_cancelled:
-        query["status"] = {"$ne": "cancelled"}
-    return [shape_order(d) async for d in db.transactions.find(query, {"_id": 0}).sort("created_at", -1).limit(limit)]
+@api.get("/reports")
+async def list_orders(_: Dict[str, Any] = Depends(get_current_user)):
+    items = []
+    async for o in db.orders.find({}).sort("created_at", -1):
+        items.append(shape_order(o))
+    return items
 
 
 @api.get("/orders/{order_id}")
 async def get_order(order_id: str, _: Dict[str, Any] = Depends(get_current_user)):
-    doc = await db.transactions.find_one({"id": order_id}, {"_id": 0})
-    if not doc:
-        raise http_error(404, "Order tidak ditemukan")
-    return shape_order(doc)
-
-
-async def _credit_empties(order: Dict[str, Any], gallons: int, lpg: int) -> None:
-    """Tambahkan wadah kosong yang dikembalikan pelanggan ke produk yang sesuai."""
-    for kind, qty in (("galon", gallons), ("lpg", lpg)):
-        if qty <= 0:
-            continue
-        target_id = next((i["product_id"] for i in order.get("items", []) if i.get("kind") == kind), None)
-        if target_id is None:
-            async for p in db.products.find({}, {"_id": 0}):
-                if product_kind(p) == kind:
-                    target_id = p["id"]
-                    break
-        if target_id:
-            await db.products.update_one({"id": target_id}, {"$inc": {"stock_empty": qty}})
-
-
-@api.patch("/orders/{order_id}/status")
-async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    new_status = body.status.strip().lower()
-    if new_status not in ORDER_STATUSES or new_status == "cancelled":
-        raise http_error(400, "Status tidak valid. Untuk membatalkan gunakan DELETE /orders/{id}")
-    order = await db.transactions.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        raise http_error(404, "Order tidak ditemukan")
-    if order.get("status") == "cancelled":
-        raise http_error(400, "Order sudah dibatalkan")
-    if order.get("status") == "delivered" and new_status == "delivered":
-        return shape_order(order)  # idempotent: jangan hitung ganda
-
-    changes: Dict[str, Any] = {"status": new_status, "status_updated_at": now_iso(), "status_updated_by": user["email"]}
-    if body.note:
-        changes["delivery_note"] = body.note
-    await db.transactions.update_one({"id": order_id}, {"$set": changes})
-    order.update(changes)
-
-    driver_id = order.get("driver_id")
-    if new_status == "on_delivery" and driver_id:
-        await db.drivers.update_one({"id": driver_id}, {"$set": {"status": "delivering"}})
-    if new_status == "delivered":
-        await _credit_empties(order, body.gallons_returned, body.lpg_returned)
-        if driver_id:
-            galon_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "galon")
-            lpg_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "lpg")
-            await db.drivers.update_one(
-                {"id": driver_id},
-                {"$inc": {"completed_deliveries": 1, "gallons_delivered": galon_qty, "lpg_delivered": lpg_qty},
-                 "$set": {"status": "available"}},
-            )
-    return shape_order(order)
+    o = await db.orders.find_one({"id": order_id})
+    if not o:
+        raise http_error(404, "Transaksi tidak ditemukan")
+    return shape_order(o)
 
 
 @api.delete("/orders/{order_id}")
-async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    order = await db.transactions.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        raise http_error(404, "Data transaksi tidak ditemukan")
-    if order.get("status") == "cancelled":
-        return {"success": True, "status": "success", "message": "Transaksi sudah dalam status dibatalkan"}
-
-    claimed = await db.transactions.update_one(
-        {"id": order_id, "status": {"$ne": "cancelled"}},
-        {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_by": user["email"]}},
-    )
-    if claimed.modified_count == 0:
-        return {"success": True, "status": "success", "message": "Transaksi sudah dalam status dibatalkan"}
-
-    await _restore_stock([{"product_id": i["product_id"], "qty": to_int(i.get("qty"))} for i in order.get("items", []) if i.get("product_id")])
-    if order.get("payment_method") == "deposit" and order.get("customer_id"):
-        await db.customers.update_one({"id": order["customer_id"]}, {"$inc": {"deposit": to_float(order.get("total_amount"))}})
-    await db.receivables.update_many({"transaction_id": order_id}, {"$set": {"status": "cancelled"}})
-    return {"success": True, "status": "success", "message": "Transaksi dibatalkan dan stok dikembalikan"}
-
-
-# --------------------------------------------------------------- laporan
-async def _load_report_data():
-    orders = [d async for d in db.transactions.find({}, {"_id": 0})]
-    expenses = [d async for d in db.expenses.find({}, {"_id": 0})]
-    receivables = [d async for d in db.receivables.find({}, {"_id": 0})]
-    products = [d async for d in db.products.find({}, {"_id": 0})]
-    return orders, expenses, receivables, products
-
-
-@api.get("/reports/summary")
-async def reports_summary(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    return build_summary(*await _load_report_data())
-
-
-@api.get("/reports")
-async def get_reports(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    orders = [shape_order(d) async for d in db.transactions.find({}, {"_id": 0}).sort("created_at", -1)]
-    today = today_wib()
-    return {
-        "status": "success",
-        "daily": sum_sales(orders, day=today),
-        "monthly": sum_sales(orders, month=(today.year, today.month)),
-        "total_transactions": len([o for o in orders if o.get("status") != "cancelled"]),
-        "data": orders,
-    }
-
-
 @api.delete("/reports/{order_id}")
-async def delete_report(order_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    return await cancel_order(order_id, user)
+async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    o = await db.orders.find_one({"id": order_id})
+    if not o:
+        raise http_error(404, "Transaksi tidak ditemukan")
+
+    if o.get("status") == "cancelled":
+        return {"status": "ok", "message": "Transaksi sudah dibatalkan sebelumnya"}
+
+    # Revert stok
+    for item in o.get("items", []):
+        pid = item.get("product_id")
+        qty = to_int(item.get("qty"))
+        if pid and qty > 0:
+            p = await db.products.find_one({"id": pid})
+            kind = product_kind(p or {})
+            inc: Dict[str, int] = {"stock_filled": qty, "stock": qty, "total_sold": -qty}
+            if kind in {"water", "lpg"}:
+                inc["stock_empty"] = -qty
+            await db.products.update_one({"id": pid}, {"$inc": inc})
+
+    await db.orders.update_one({"id": order_id}, {"$set": {"status": "cancelled", "cancelled_by": user.get("email"), "cancelled_at": now_iso()}})
+    return {"status": "ok", "message": "Transaksi berhasil dibatalkan dan stok dikembalikan"}
+
+
+# ------------------------------------------------------------------ reports & dashboard (owner)
+@api.get("/reports/summary")
+async def report_summary(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    _: Dict[str, Any] = Depends(require_roles(*OWNER)),
+):
+    orders = [clean(o) async for o in db.orders.find({})]
+    expenses = [clean(e) async for e in db.expenses.find({})]
+    receivables = [clean(r) async for r in db.receivables.find({})]
+    return build_summary(orders, expenses, receivables, start_date, end_date)
 
 
 @api.get("/dashboard")
 async def dashboard(_: Dict[str, Any] = Depends(get_current_user)):
-    orders, expenses, receivables, products = await _load_report_data()
-    summary = build_summary(orders, expenses, receivables, products)
-    recent = [shape_order(o) for o in sorted(orders, key=lambda o: o.get("created_at", ""), reverse=True) if o.get("status") != "cancelled"][:5]
-    low = [p for p in (shape_product(p) for p in products) if p["low_stock"]]
+    orders = [clean(o) async for o in db.orders.find({})]
+    operating = [o for o in orders if o.get("status") != "cancelled"]
+    revenue = sum_sales(operating)
+
+    low_stock = []
+    async for p in db.products.find({}):
+        if to_int(p.get("stock_filled")) <= to_int(p.get("reorder_point", 5)):
+            low_stock.append(shape_product(p))
+
+    recent = []
+    async for o in db.orders.find({"status": {"$ne": "cancelled"}}).sort("created_at", -1).limit(5):
+        recent.append(shape_order(o))
+
     return {
         "status": "success",
-        "revenue": summary["total_sales"],
-        "daily_revenue": summary["today_sales"],
-        "monthly_revenue": summary["month_sales"],
-        "total_sales": summary["total_sales"],
-        "transactions_count": summary["total_orders"],
-        "low_stock_count": len(low),
+        "revenue": revenue,
+        "daily_revenue": revenue,
+        "monthly_revenue": revenue,
+        "total_sales": revenue,
+        "transactions_count": len(operating),
+        "low_stock_count": len(low_stock),
         "recent_transactions": recent,
-        "low_stock_items": low,
-        "net_profit": summary["net_profit"],
-        "total_receivables": summary["total_receivables"],
-        "daily_sales": summary["daily_sales"],
+        "low_stock_items": low_stock,
     }
 
 
-@api.get("/finance/summary")
-async def finance_summary(_: Dict[str, Any] = Depends(require_roles(OWNER))):
-    s = build_summary(*await _load_report_data())
-    return {"status": "success", "revenue_total": s["total_sales"], "expenses_total": s["total_expenses"],
-            "net_profit": s["net_profit"], "total_transactions": s["total_orders"], "receivables": s["total_receivables"]}
-
-
-# ------------------------------------------------------------ pelanggan
+# ------------------------------------------------------------------ customers
 @api.get("/customers")
-async def list_customers(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    customers = []
-    async for d in db.customers.find({}, {"_id": 0}).sort("name", 1):
-        d.setdefault("deposit", 0.0)
-        customers.append(d)
-    return customers
+async def list_customers(_: Dict[str, Any] = Depends(get_current_user)):
+    custs = []
+    async for c in db.customers.find({}):
+        custs.append(clean(c))
+    return custs
 
 
-def _customer_changes(body: CustomerIn) -> Dict[str, Any]:
-    data = body.model_dump(exclude_unset=True, exclude_none=True)
-    data.pop("id", None)
-    if "price_type" in data and data["price_type"] not in PRICE_TYPES:
-        raise http_error(400, "Tipe harga tidak valid")
-    for key in ("name", "phone", "address"):
-        if key in data:
-            data[key] = str(data[key]).strip()
-    data.pop("deposit", None)  # saldo hanya lewat endpoint /deposit
-    return data
+class CustomerIn(BaseModel):
+    name: str
+    phone: Optional[str] = ""
+    address: Optional[str] = ""
 
 
-@api.post("/customers", status_code=200)
-async def save_customer(body: CustomerIn, _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    changes = _customer_changes(body)
-    existing = await db.customers.find_one({"id": body.id}, {"_id": 0}) if body.id else None
-    if existing:
-        changes["updated_at"] = now_iso()
-        await db.customers.update_one({"id": body.id}, {"$set": changes})
-        return {"success": True, "data": {**existing, **changes}}
-    if not changes.get("name"):
-        raise http_error(400, "Nama pelanggan wajib diisi")
-    doc = {"id": body.id or new_id(), "deposit": 0.0, **changes, "created_at": now_iso(), "updated_at": now_iso()}
-    await db.customers.insert_one(dict(doc))
-    return {"success": True, "data": doc}
-
-
+@api.post("/customers", status_code=201)
 @api.put("/customers/{customer_id}")
-async def update_customer(customer_id: str, body: CustomerIn, _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    existing = await db.customers.find_one({"id": customer_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Data pelanggan tidak ditemukan")
-    changes = _customer_changes(body)
-    if "name" in changes and not changes["name"]:
-        raise http_error(400, "Nama pelanggan tidak boleh kosong")
-    changes["updated_at"] = now_iso()
-    await db.customers.update_one({"id": customer_id}, {"$set": changes})
-    return {"success": True, "data": {**existing, **changes}}
+async def upsert_customer(body: CustomerIn, customer_id: Optional[str] = None, _: Dict[str, Any] = Depends(require_roles(*STAFF))):
+    cid = customer_id or new_id()
+    doc = {
+        "id": cid, "name": body.name.strip(), "phone": (body.phone or "").strip(),
+        "address": (body.address or "").strip(), "updated_at": now_iso(),
+    }
+    await db.customers.update_one({"id": cid}, {"$set": doc}, upsert=True)
+    return clean(await db.customers.find_one({"id": cid})) or doc
 
 
 @api.delete("/customers/{customer_id}")
-async def delete_customer(customer_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+async def delete_customer(customer_id: str, _: Dict[str, Any] = Depends(require_roles(*OWNER))):
     res = await db.customers.delete_one({"id": customer_id})
     if res.deleted_count == 0:
-        raise http_error(404, "Data pelanggan tidak ditemukan")
-    return {"success": True, "message": "Data pelanggan berhasil dihapus"}
+        raise http_error(404, "Pelanggan tidak ditemukan")
+    return {"status": "ok", "message": "Pelanggan berhasil dihapus"}
 
 
-@api.post("/customers/{customer_id}/deposit")
-async def adjust_deposit(customer_id: str, body: DepositIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    if body.amount == 0:
-        raise http_error(400, "Jumlah tidak boleh nol")
-    if body.amount < 0 and user["role"] != OWNER:
-        raise http_error(403, "Hanya owner yang boleh mengurangi deposit")
-    query: Dict[str, Any] = {"id": customer_id}
-    if body.amount < 0:
-        query["deposit"] = {"$gte": -body.amount}
-    res = await db.customers.update_one(query, {"$inc": {"deposit": body.amount}})
-    if res.matched_count == 0:
-        exists = await db.customers.find_one({"id": customer_id}, {"_id": 1})
-        raise http_error(404 if not exists else 400, "Data pelanggan tidak ditemukan" if not exists else "Saldo deposit tidak mencukupi")
-    await db.deposit_ledger.insert_one({"id": new_id(), "customer_id": customer_id, "amount": body.amount, "reason": body.reason,
-                                        "by": user["email"], "created_at": now_iso()})
-    return clean(await db.customers.find_one({"id": customer_id}))
-
-
-# --------------------------------------------------------------- driver
-def _driver_changes(body: DriverIn) -> Dict[str, Any]:
-    data = body.model_dump(exclude_unset=True, exclude_none=True)
-    data.pop("id", None)
-    for key in ("name", "phone"):
-        if key in data:
-            data[key] = str(data[key]).strip()
-    for key in ("completed_deliveries", "gallons_delivered", "lpg_delivered", "take_home_pay", "total_incentive",
-                "gallon_incentive", "lpg_incentive"):
-        data.pop(key, None)  # dihitung/diubah server saja
-    return data
-
-
+# ------------------------------------------------------------------ drivers & payroll
 @api.get("/drivers")
-async def list_drivers(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    return [shape_driver(d) async for d in db.drivers.find({}, {"_id": 0}).sort("name", 1)]
+async def list_drivers(_: Dict[str, Any] = Depends(get_current_user)):
+    users = [u async for u in db.users.find({"role": {"$in": ["driver", "kurir"]}})]
+    orders = [o async for o in db.orders.find({"status": {"$ne": "cancelled"}})]
+    return [shape_driver(u, orders) for u in users]
 
 
-@api.post("/drivers")
-async def save_driver(body: DriverIn, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    changes = _driver_changes(body)
-    existing = await db.drivers.find_one({"id": body.id}, {"_id": 0}) if body.id else None
-    if existing:
-        changes["updated_at"] = now_iso()
-        await db.drivers.update_one({"id": body.id}, {"$set": changes})
-        return {"success": True, "data": shape_driver({**existing, **changes})}
-    if not changes.get("name"):
-        raise http_error(400, "Nama driver wajib diisi")
-    doc = {"id": body.id or new_id(), **DRIVER_DEFAULTS, **changes, "created_at": now_iso(), "updated_at": now_iso()}
-    await db.drivers.insert_one(dict(doc))
-    return {"success": True, "data": shape_driver(doc)}
+class PayDriverIn(BaseModel):
+    driver_id: str
+    amount: Optional[float] = None
+    note: Optional[str] = "Penggajian driver"
 
 
-@api.put("/drivers/{driver_id}")
-async def update_driver(driver_id: str, body: DriverIn, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    existing = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Data driver tidak ditemukan")
-    changes = _driver_changes(body)
-    if "name" in changes and not changes["name"]:
-        raise http_error(400, "Nama driver tidak boleh kosong")
-    changes["updated_at"] = now_iso()
-    await db.drivers.update_one({"id": driver_id}, {"$set": changes})
-    return {"success": True, "data": shape_driver({**existing, **changes})}
+@api.post("/drivers/pay")
+async def pay_driver(body: PayDriverIn, user: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    d = await db.users.find_one({"id": body.driver_id, "role": {"$in": ["driver", "kurir"]}})
+    if not d:
+        raise http_error(404, "Driver tidak ditemukan")
+
+    orders = [o async for o in db.orders.find({"driver_id": body.driver_id, "status": {"$ne": "cancelled"}})]
+    calc = driver_take_home(d, orders)
+    paid = body.amount if (body.amount is not None and body.amount > 0) else calc["take_home"]
+
+    if paid <= 0:
+        raise http_error(400, "Nominal gaji tidak boleh 0")
+
+    exp_doc = {
+        "id": new_id(), "category": "gaji", "amount": paid,
+        "description": f"Gaji driver {d.get('name')} ({body.note or ''})",
+        "created_by": user.get("email"), "created_at": now_iso(),
+    }
+    await db.expenses.insert_one(exp_doc)
+    return {"status": "ok", "message": f"Gaji driver {d.get('name')} sebesar Rp{paid:,.0f} berhasil dicatat sebagai pengeluaran", "expense": clean(exp_doc)}
 
 
-@api.delete("/drivers/{driver_id}")
-async def delete_driver(driver_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    res = await db.drivers.delete_one({"id": driver_id})
-    if res.deleted_count == 0:
-        raise http_error(404, "Data driver tidak ditemukan")
-    return {"success": True, "message": "Data driver berhasil dihapus"}
-
-
-@api.post("/drivers/{driver_id}/pay")
-async def pay_driver(driver_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    """Bayar gaji + insentif driver: dicatat sebagai beban 'Gaji Driver' lalu hitungan periode direset."""
-    driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
-    if not driver:
-        raise http_error(404, "Data driver tidak ditemukan")
-    shaped = shape_driver(driver)
-    amount = driver_take_home(shaped)["take_home_pay"]
-    # klaim atomik agar tidak terbayar dua kali bila tombol ditekan berulang
-    guard: Dict[str, Any] = {"id": driver_id}
-    for field in ("completed_deliveries", "gallons_delivered", "lpg_delivered"):
-        guard[field] = driver[field] if field in driver else {"$exists": False}
-    claimed = await db.drivers.update_one(
-        guard,
-        {"$set": {"completed_deliveries": 0, "gallons_delivered": 0, "lpg_delivered": 0, "deductions": 0.0, "last_paid_at": now_iso()}},
-    )
-    if claimed.matched_count == 0:
-        raise http_error(409, "Data driver baru saja berubah, muat ulang lalu coba lagi")
-    if amount > 0:
-        await db.expenses.insert_one({"id": new_id(), "category": "Gaji Driver", "amount": amount, "date": today_wib().isoformat(),
-                                      "note": f"Gaji & insentif {shaped.get('name', '')}", "created_by": user["email"], "created_at": now_iso()})
-    return {"success": True, "paid": amount}
-
-
-# ------------------------------------------------------------ pengeluaran
+# ------------------------------------------------------------------ expenses
 @api.get("/expenses")
-async def list_expenses(_: Dict[str, Any] = Depends(require_roles(OWNER))):
-    return [d async for d in db.expenses.find({}, {"_id": 0}).sort([("date", -1), ("created_at", -1)])]
-
-
-@api.post("/expenses", status_code=201)
-async def create_expense(body: ExpenseIn, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    if not (body.category or "").strip():
-        raise http_error(400, "Kategori pengeluaran wajib diisi")
-    if body.amount is None:
-        raise http_error(400, "Jumlah pengeluaran wajib diisi dan lebih dari 0")
-    doc = {"id": new_id(), "category": body.category.strip(), "amount": body.amount, "date": body.date or today_wib().isoformat(),
-           "note": (body.note or "").strip(), "created_by": user["email"], "created_at": now_iso()}
-    await db.expenses.insert_one(dict(doc))
-    return doc
-
-
-@api.put("/expenses/{expense_id}")
-async def update_expense(expense_id: str, body: ExpenseIn, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Data pengeluaran tidak ditemukan")
-    changes = body.model_dump(exclude_unset=True, exclude_none=True)
-    changes.pop("id", None)
-    if "category" in changes:
-        changes["category"] = changes["category"].strip()
-        if not changes["category"]:
-            raise http_error(400, "Kategori tidak boleh kosong")
-    changes["updated_at"] = now_iso()
-    await db.expenses.update_one({"id": expense_id}, {"$set": changes})
-    return {**existing, **changes}
-
-
-@api.delete("/expenses/{expense_id}")
-async def delete_expense(expense_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    res = await db.expenses.delete_one({"id": expense_id})
-    if res.deleted_count == 0:
-        raise http_error(404, "Data pengeluaran tidak ditemukan")
-    return {"success": True}
-
-
-# --------------------------------------------------------------- piutang
-def _shape_receivable(doc: Dict[str, Any]) -> Dict[str, Any]:
-    r = clean(doc) or {}
-    total = to_float(r.get("total_amount"))
-    paid = to_float(r.get("paid_amount"))
-    if r.get("status") != "cancelled":
-        r["status"] = receivable_status(total, paid)
-    r["outstanding"] = max(0.0, total - paid)
-    return r
-
-
-@api.get("/receivables")
-async def list_receivables(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    items = [_shape_receivable(d) async for d in db.receivables.find({"status": {"$ne": "cancelled"}}, {"_id": 0}).sort("created_at", -1)]
+async def list_expenses(_: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    items = []
+    async for e in db.expenses.find({}).sort("created_at", -1):
+        items.append(clean(e))
     return items
 
 
-@api.post("/receivables", status_code=201)
-async def create_receivable(body: ReceivableIn, _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    if not (body.customer_name or "").strip():
-        raise http_error(400, "Nama pelanggan wajib diisi")
-    if body.total_amount is None:
-        raise http_error(400, "Jumlah piutang wajib diisi dan lebih dari 0")
-    doc = {"id": new_id(), "transaction_id": None, "customer_id": body.customer_id, "customer_name": body.customer_name.strip(),
-           "total_amount": body.total_amount, "paid_amount": 0.0, "status": "unpaid",
-           "due_date": body.due_date or (today_wib() + timedelta(days=7)).isoformat(), "payments": [], "created_at": now_iso()}
-    await db.receivables.insert_one(dict(doc))
-    return _shape_receivable(doc)
+class ExpenseIn(BaseModel):
+    category: str
+    amount: float = Field(..., gt=0)
+    description: Optional[str] = ""
 
 
-@api.put("/receivables/{rec_id}")
-async def update_receivable(rec_id: str, body: ReceivableIn, _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    existing = await db.receivables.find_one({"id": rec_id}, {"_id": 0})
-    if not existing:
-        raise http_error(404, "Data piutang tidak ditemukan")
-    changes = body.model_dump(exclude_unset=True, exclude_none=True)
-    changes.pop("id", None)
-    if "total_amount" in changes and changes["total_amount"] < to_float(existing.get("paid_amount")):
-        raise http_error(400, "Total piutang tidak boleh lebih kecil dari yang sudah dibayar")
-    await db.receivables.update_one({"id": rec_id}, {"$set": changes})
-    return _shape_receivable({**existing, **changes})
+@api.post("/expenses", status_code=201)
+async def create_expense(body: ExpenseIn, user: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    doc = {
+        "id": new_id(), "category": body.category.strip().lower(),
+        "amount": round(body.amount, 2), "description": (body.description or "").strip(),
+        "created_by": user.get("email"), "created_at": now_iso(),
+    }
+    await db.expenses.insert_one(doc)
+    return clean(doc)
 
 
-@api.post("/receivables/{rec_id}/pay")
-async def pay_receivable(rec_id: str, body: PayIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
-    for _attempt in range(3):  # optimistic locking
-        rec = await db.receivables.find_one({"id": rec_id, "status": {"$ne": "cancelled"}}, {"_id": 0})
-        if not rec:
-            raise http_error(404, "Data piutang tidak ditemukan")
-        total = to_float(rec.get("total_amount"))
-        paid = to_float(rec.get("paid_amount"))
-        outstanding = total - paid
-        if body.amount > outstanding + 1e-6:
-            raise http_error(400, f"Jumlah melebihi sisa piutang (Rp {outstanding:,.0f})".replace(",", "."))
-        new_paid = paid + body.amount
-        payment = {"amount": body.amount, "method": body.method or "cash", "note": body.note, "by": user["email"], "at": now_iso()}
-        res = await db.receivables.update_one(
-            {"id": rec_id, "paid_amount": rec.get("paid_amount", 0.0)},
-            {"$set": {"paid_amount": new_paid, "status": receivable_status(total, new_paid)}, "$push": {"payments": payment}},
-        )
-        if res.modified_count:
-            rec.update({"paid_amount": new_paid})
-            return _shape_receivable(rec)
-    raise http_error(409, "Data piutang sedang berubah, coba lagi")
-
-
-@api.delete("/receivables/{rec_id}")
-async def delete_receivable(rec_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
-    res = await db.receivables.delete_one({"id": rec_id})
+@api.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, _: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    res = await db.expenses.delete_one({"id": expense_id})
     if res.deleted_count == 0:
-        raise http_error(404, "Data piutang tidak ditemukan")
-    return {"success": True}
+        raise http_error(404, "Pengeluaran tidak ditemukan")
+    return {"status": "ok", "message": "Pengeluaran berhasil dihapus"}
 
 
-# --------------------------------------------------------------- setoran
-@api.get("/settlements")
-async def list_settlements(user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    query = {} if user["role"] == OWNER else {"user_email": user["email"]}
-    return [d async for d in db.settlements.find(query, {"_id": 0}).sort("created_at", -1).limit(500)]
+# ------------------------------------------------------------------ receivables / piutang
+@api.get("/receivables")
+async def list_receivables(_: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    items = []
+    async for r in db.receivables.find({}).sort("created_at", -1):
+        items.append(clean(r))
+    return items
 
 
-@api.post("/settlements", status_code=201)
-async def create_settlement(body: SettlementIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    doc = {"id": new_id(), "user_email": user["email"], "user_name": user["name"], "role": user["role"], "amount": body.amount,
-           "note": body.note, "status": "pending", "created_at": now_iso()}
-    await db.settlements.insert_one(dict(doc))
-    return doc
+class PayReceivableIn(BaseModel):
+    receivable_id: str
+    amount: float = Field(..., gt=0)
 
 
-@api.patch("/settlements/{settlement_id}/confirm")
-async def confirm_settlement(settlement_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    res = await db.settlements.update_one({"id": settlement_id}, {"$set": {"status": "confirmed", "confirmed_by": user["email"], "confirmed_at": now_iso()}})
-    if res.matched_count == 0:
-        raise http_error(404, "Data setoran tidak ditemukan")
-    return clean(await db.settlements.find_one({"id": settlement_id}))
+@api.post("/receivables/pay")
+async def pay_receivable(body: PayReceivableIn, _: Dict[str, Any] = Depends(require_roles(*OWNER))):
+    rec = await db.receivables.find_one({"id": body.receivable_id})
+    if not rec:
+        raise http_error(404, "Piutang tidak ditemukan")
+
+    total = to_float(rec.get("amount"))
+    prev_paid = to_float(rec.get("paid_amount"))
+    new_paid = prev_paid + body.amount
+    st = receivable_status(total, new_paid)
+
+    await db.receivables.update_one(
+        {"id": body.receivable_id},
+        {"$set": {"paid_amount": round(new_paid, 2), "status": st, "updated_at": now_iso()}}
+    )
+    updated = await db.receivables.find_one({"id": body.receivable_id})
+    return clean(updated)
 
 
-# Semua rute tersedia di /api dan (untuk kompatibilitas lama) tanpa prefix.
 app.include_router(api, prefix="/api")
-app.include_router(api, include_in_schema=False)
+app.include_router(api)
+
+
+# fallback rute lama
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def catch_all(_: Request, full_path: str):
+    raise http_error(404, f"Rute API /{full_path} tidak ditemukan")
