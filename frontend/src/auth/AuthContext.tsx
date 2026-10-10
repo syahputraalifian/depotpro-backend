@@ -18,6 +18,7 @@ type AuthState = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState>({} as AuthState);
@@ -42,14 +43,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const res = await api.login(email, password);
+    const res = await api.login({ email: email.trim(), password });
     await storage.secureSet(TOKEN_KEY, res.access_token);
+    await storage.secureSet("user_role", String(res.user?.role || "").toLowerCase());
     setUser(res.user);
   };
 
   const signOut = async () => {
     // 1. wipe auth token from secure storage
-    try { await storage.secureRemove(TOKEN_KEY); } catch {}
+    try { await storage.secureRemove(TOKEN_KEY); await storage.secureRemove("user_role"); } catch {}
     // 2. reset global user state (owner/cashier/driver/warehouse)
     setUser(null);
     // 3. clean hard-redirect to the login screen
@@ -57,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signOut, logout: signOut }}>
       {children}
     </AuthContext.Provider>
   );

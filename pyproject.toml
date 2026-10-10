@@ -13,7 +13,7 @@ pydantic = "*"
 python-dotenv = "*"
 pymongo = "*"
 pyjwt = "*"
-passlib = "*"
+bcrypt = "*"
 email-validator = "*"
 
 [build-system]
