@@ -75,7 +75,8 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
         stock: Int,
         emptyGallonStock: Int,
         emptyLpgStock: Int,
-        unit: String
+        unit: String,
+        original: Product? = null
     ) {
         viewModelScope.launch {
             depotRepository.updateProduct(
@@ -89,7 +90,8 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
                     emptyGallonStock = emptyGallonStock,
                     emptyLpgStock = emptyLpgStock,
                     unit = unit
-                )
+                ),
+                original
             )
         }
     }

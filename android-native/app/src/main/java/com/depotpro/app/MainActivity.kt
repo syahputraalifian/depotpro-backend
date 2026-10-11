@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
                         while (true) {
                             container.depotRepository.refreshAll(role, silent = !first)
                             first = false
-                            delay(30_000)
+                            delay(15_000)
                         }
                     }
                 }

@@ -683,15 +683,21 @@ async def update_product(product_id: str, body: ProductIn, _: Dict[str, Any] = D
 
 @api.post("/products/{product_id}/adjust")
 async def adjust_product_stock(product_id: str, body: AdjustIn, _: Dict[str, Any] = Depends(require_roles(OWNER, WAREHOUSE))):
-    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not existing:
+    """Ubah stok dengan selisih (delta) secara ATOMIK, aman bila ada penjualan bersamaan dari perangkat lain."""
+    if not await db.products.find_one({"id": product_id}, {"_id": 1}):
         raise http_error(404, "Produk tidak ditemukan")
-    new_f = max(0, to_int(existing.get("stock_filled")) + body.stock_filled_delta)
-    new_e = max(0, to_int(existing.get("stock_empty")) + body.stock_empty_delta)
-    new_sold = max(0, to_int(existing.get("total_sold")) + body.total_sold_delta)
-    changes = {"stock_filled": new_f, "stock": new_f, "stock_empty": new_e, "total_sold": new_sold}
-    await db.products.update_one({"id": product_id}, {"$set": changes})
-    return shape_product({**existing, **changes})
+    filled = {"$max": [0, {"$add": [{"$ifNull": ["$stock_filled", {"$ifNull": ["$stock", 0]}]}, body.stock_filled_delta]}]}
+    await db.products.update_one(
+        {"id": product_id},
+        [{"$set": {
+            "stock_filled": filled,
+            "stock": filled,
+            "stock_empty": {"$max": [0, {"$add": [{"$ifNull": ["$stock_empty", 0]}, body.stock_empty_delta]}]},
+            "total_sold": {"$max": [0, {"$add": [{"$ifNull": ["$total_sold", 0]}, body.total_sold_delta]}]},
+        }}],
+    )
+    fresh = await db.products.find_one({"id": product_id}, {"_id": 0})
+    return shape_product(fresh)
 
 
 @api.delete("/products/{product_id}")

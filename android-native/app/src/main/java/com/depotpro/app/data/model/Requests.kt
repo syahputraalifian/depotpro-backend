@@ -8,6 +8,20 @@ data class UpdateStatusRequest(
     @SerializedName("lpg_returned") val lpgReturned: Int = 0
 )
 
+/** Info produk tanpa angka stok: stok diubah lewat selisih (adjust) agar tidak menimpa penjualan perangkat lain. */
+data class ProductInfoBody(
+    @SerializedName("name") val name: String,
+    @SerializedName("category") val category: String? = null,
+    @SerializedName("price") val price: Double,
+    @SerializedName("cost_price") val costPrice: Double? = null,
+    @SerializedName("unit") val unit: String? = null
+)
+
+data class AdjustRequest(
+    @SerializedName("stock_filled_delta") val stockFilledDelta: Int = 0,
+    @SerializedName("stock_empty_delta") val stockEmptyDelta: Int = 0
+)
+
 data class PayRequest(
     @SerializedName("amount") val amount: Double
 )

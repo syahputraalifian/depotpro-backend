@@ -172,6 +172,40 @@ def main():
     check("stok kembali setelah batal (8 + 2 = 10, minus 1 pengiriman = 9)", pnow.get("stock"), 9)
     check("wadah kosong kembali (3 - 2 = 1)", pnow.get("empty_gallon_stock"), 1)
 
+    # ---- sinkron multi-perangkat: edit basi + penjualan serentak
+    st, sp = call("POST", "/products", {"name": "ZZ TEST Sinkron", "category": "Air Isi Ulang", "price": 4000.0,
+                                        "cost_price": 1000.0, "stock": 10, "unit": "galon"}, tok)
+    if st in (200, 201):
+        sid = sp["id"]; cleanup.append(("DELETE", f"/products/{sid}"))
+        so = str(uuid.uuid4())
+        call("POST", "/orders", {"id": so, "customer_name": "ZZ TEST", "items": [{"product_id": sid, "product_name": "x", "quantity": 3, "price": 4000.0}],
+                                 "total_amount": 12000.0, "payment_type": "cash", "status": "completed"}, tok)
+        cleanup.append(("DELETE", f"/orders/{so}"))
+        # Perangkat B membuka edit saat stok 10, mengubah jadi 12 (+2) setelah A menjual 3 -> harus 9, bukan 12
+        st, b = call("POST", f"/products/{sid}/adjust", {"stock_filled_delta": 2, "stock_empty_delta": 0}, tok)
+        check("adjust stok memakai selisih (7 + 2)", (st, (b or {}).get("stock") if isinstance(b, dict) else None), (200, 9), b)
+        st, b = call("PUT", f"/products/{sid}", {"name": "ZZ TEST Sinkron 2", "category": "Air Isi Ulang", "price": 4500.0,
+                                                  "cost_price": 1000.0, "unit": "galon"}, tok)
+        check("PUT info tanpa stok tidak mengubah stok", (st, stock_of(tok, sid).get("stock")), (200, 9), b)
+        # 5 perangkat membeli serentak, stok hanya 3
+        call("POST", f"/products/{sid}/adjust", {"stock_filled_delta": -6}, tok)
+        check("stok disetel 3 untuk uji serentak", stock_of(tok, sid).get("stock"), 3)
+        import threading
+        out = []
+        def buy():
+            oid_ = str(uuid.uuid4())
+            s_, b_ = call("POST", "/orders", {"id": oid_, "customer_name": "ZZ TEST", "items": [{"product_id": sid, "product_name": "x", "quantity": 1, "price": 4500.0}],
+                                              "total_amount": 4500.0, "payment_type": "cash", "status": "completed"}, tok)
+            out.append((s_, oid_))
+        th = [threading.Thread(target=buy) for _ in range(5)]
+        [x.start() for x in th]; [x.join() for x in th]
+        for s_, oid_ in out:
+            if s_ == 200:
+                cleanup.append(("DELETE", f"/orders/{oid_}"))
+        ok_n = sum(1 for s_, _ in out if s_ == 200)
+        check("5 pembeli serentak, stok 3: tepat 3 berhasil", ok_n, 3)
+        check("stok akhir 0, tidak negatif", stock_of(tok, sid).get("stock"), 0)
+
     # ---- hak akses
     st, kb = call("POST", "/auth/login", {"email": "kasir@gasgalon.id", "password": "kasir12345"})
     if st == 200:

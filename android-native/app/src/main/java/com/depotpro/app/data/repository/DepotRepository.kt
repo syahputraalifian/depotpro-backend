@@ -2,6 +2,7 @@ package com.depotpro.app.data.repository
 
 import com.depotpro.app.data.api.ApiService
 import com.depotpro.app.data.api.toUserMessage
+import com.depotpro.app.data.model.AdjustRequest
 import com.depotpro.app.data.model.Customer
 import com.depotpro.app.data.model.DashboardSummary
 import com.depotpro.app.data.model.Driver
@@ -9,6 +10,7 @@ import com.depotpro.app.data.model.Expense
 import com.depotpro.app.data.model.Order
 import com.depotpro.app.data.model.PayRequest
 import com.depotpro.app.data.model.Product
+import com.depotpro.app.data.model.ProductInfoBody
 import com.depotpro.app.data.model.Receivable
 import com.depotpro.app.data.model.UpdateStatusRequest
 import kotlinx.coroutines.CancellationException
@@ -168,9 +170,39 @@ class DepotRepository(private val api: ApiService) {
         return true
     }
 
-    suspend fun updateProduct(product: Product): Boolean {
+    /**
+     * [original] = produk seperti saat dialog edit dibuka. Bila diberikan, stok dikirim sebagai SELISIH
+     * (atomik di server) sehingga penjualan dari perangkat lain tidak tertimpa. Tanpa [original], stok dikirim mutlak.
+     */
+    suspend fun updateProduct(product: Product, original: Product? = null): Boolean {
         val id = product.id ?: return false
-        mutate { api.updateProduct(id, product) } ?: return false
+        if (original == null) {
+            mutate { api.updateProduct(id, product) } ?: return false
+        } else {
+            val done = mutate {
+                api.updateProductInfo(
+                    id,
+                    ProductInfoBody(
+                        name = product.name,
+                        category = product.category,
+                        price = product.price,
+                        costPrice = product.costPrice,
+                        unit = product.unit
+                    )
+                )
+                val filledDelta = product.stock - original.stock
+                val emptyDelta = (product.emptyGallonStock - original.emptyGallonStock) +
+                    (product.emptyLpgStock - original.emptyLpgStock)
+                if (filledDelta != 0 || emptyDelta != 0) {
+                    api.adjustProductStock(id, AdjustRequest(filledDelta, emptyDelta))
+                }
+                Unit
+            }
+            if (done == null) {
+                refreshProducts()
+                return false
+            }
+        }
         notify("Produk diperbarui")
         refreshProducts()
         return true

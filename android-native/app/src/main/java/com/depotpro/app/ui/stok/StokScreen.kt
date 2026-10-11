@@ -280,7 +280,7 @@ fun StokScreen(stokViewModel: StokViewModel, userRole: String?) {
                                 if (editingProduct == null) {
                                     stokViewModel.addProduct(name, category, p, cp, s, eg, el, unit)
                                 } else {
-                                    editingProduct?.id?.let { stokViewModel.updateProduct(it, name, category, p, cp, s, eg, el, unit) }
+                                    editingProduct?.id?.let { stokViewModel.updateProduct(it, name, category, p, cp, s, eg, el, unit, editingProduct) }
                                 }
                                 showDialog = false
                             }

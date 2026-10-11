@@ -1,5 +1,6 @@
 package com.depotpro.app.data.api
 
+import com.depotpro.app.data.model.AdjustRequest
 import com.depotpro.app.data.model.AuthResponse
 import com.depotpro.app.data.model.Customer
 import com.depotpro.app.data.model.DashboardSummary
@@ -9,6 +10,7 @@ import com.depotpro.app.data.model.Expense
 import com.depotpro.app.data.model.LoginRequest
 import com.depotpro.app.data.model.Order
 import com.depotpro.app.data.model.PayRequest
+import com.depotpro.app.data.model.ProductInfoBody
 import com.depotpro.app.data.model.Product
 import com.depotpro.app.data.model.Receivable
 import com.depotpro.app.data.model.SimpleResponse
@@ -49,6 +51,12 @@ interface ApiService {
 
     @PUT("products/{id}")
     suspend fun updateProduct(@Path("id") id: String, @Body product: Product): Product
+
+    @PUT("products/{id}")
+    suspend fun updateProductInfo(@Path("id") id: String, @Body body: ProductInfoBody): Product
+
+    @POST("products/{id}/adjust")
+    suspend fun adjustProductStock(@Path("id") id: String, @Body body: AdjustRequest): Product
 
     @DELETE("products/{id}")
     suspend fun deleteProduct(@Path("id") id: String): SimpleResponse
