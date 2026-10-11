@@ -88,3 +88,8 @@ project.zip
 local.properties
 .DS_Store
 __MACOSX/
+
+android-native/.gradle/
+android-native/build/
+android-native/app/build/
+android-native/.kotlin/
