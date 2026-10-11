@@ -37,7 +37,10 @@ def call(method, path, body=None, token=None):
 
 
 def check(name, got, expect, body=None):
-    ok = got in (expect if isinstance(expect, (list, tuple)) else [expect])
+    if isinstance(expect, tuple) and len(expect) == 2 and isinstance(got, tuple) and len(got) == 2 and isinstance(expect[0], int) and isinstance(expect[1], bool):
+        ok = (got == expect)
+    else:
+        ok = got in (expect if isinstance(expect, (list, tuple)) else [expect])
     results.append((ok, name, got, body))
     print(("PASS " if ok else "FAIL ") + f"{name}  -> {got}" + ("" if ok else f"  | {str(body)[:300]}"))
     return ok
