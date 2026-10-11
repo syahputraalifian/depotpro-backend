@@ -294,6 +294,7 @@ class ProductIn(_Base):
     empty_gallon_stock: Optional[int] = Field(None, ge=0)
     empty_lpg_stock: Optional[int] = Field(None, ge=0)
     reorder_point: Optional[int] = Field(None, ge=0)
+    track_empty: Optional[bool] = None  # False = produk ini tidak menambah stok wadah kosong saat terjual
 
 
 class AdjustIn(_Base):
@@ -771,7 +772,8 @@ async def create_sale(body: TransactionIn, user: Dict[str, Any]) -> Dict[str, An
         total += subtotal
         total_hpp += shaped["hpp"] * qty
         validated.append({"product_id": product["id"], "product_name": shaped["name"], "qty": qty, "quantity": qty,
-                          "price": unit_price, "hpp": shaped["hpp"], "subtotal": subtotal, "kind": shaped["kind"]})
+                          "price": unit_price, "hpp": shaped["hpp"], "subtotal": subtotal, "kind": shaped["kind"],
+                          "tracks_empty": product.get("track_empty") is not False})
 
     if method == "tempo" and not (body.customer_id or body.customer_name):
         raise http_error(400, "Pembayaran tempo membutuhkan data pelanggan")
@@ -810,6 +812,11 @@ async def create_sale(body: TransactionIn, user: Dict[str, Any]) -> Dict[str, An
         "status": order_status, "driver_id": body.driver_id, "driver_name": body.driver_name, "note": body.note,
         "created_at": now_iso(), "created_by": user["email"], "created_by_name": user["name"],
     }
+    # Penjualan langsung (tukar di tempat): wadah kosong dari pelanggan langsung bertambah.
+    # Untuk pengiriman, wadah kosong dicatat saat status 'delivered' (sesuai jumlah yang dikembalikan).
+    empties = [{"product_id": i["product_id"], "qty": i["qty"]} for i in validated if i.get("tracks_empty")] \
+        if order_status == "completed" else []
+    doc["empties_credited"] = empties
     try:
         await db.transactions.insert_one(dict(doc))
     except Exception:
@@ -817,6 +824,9 @@ async def create_sale(body: TransactionIn, user: Dict[str, Any]) -> Dict[str, An
         if method == "deposit":
             await db.customers.update_one({"id": customer["id"]}, {"$inc": {"deposit": total}})
         raise http_error(409, "Transaksi ganda terdeteksi")
+
+    for e in empties:
+        await db.products.update_one({"id": e["product_id"]}, {"$inc": {"stock_empty": e["qty"]}})
 
     if method == "tempo":
         due = body.due_date or (today_wib() + timedelta(days=7)).isoformat()
@@ -928,6 +938,13 @@ async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(require_rol
         return {"success": True, "status": "success", "message": "Transaksi sudah dalam status dibatalkan"}
 
     await _restore_stock([{"product_id": i["product_id"], "qty": to_int(i.get("qty"))} for i in order.get("items", []) if i.get("product_id")])
+    for e in order.get("empties_credited", []) or []:
+        qty = to_int(e.get("qty"))
+        if e.get("product_id") and qty > 0:
+            await db.products.update_one(
+                {"id": e["product_id"]},
+                [{"$set": {"stock_empty": {"$max": [0, {"$subtract": [{"$ifNull": ["$stock_empty", 0]}, qty]}]}}}],
+            )
     if order.get("payment_method") == "deposit" and order.get("customer_id"):
         await db.customers.update_one({"id": order["customer_id"]}, {"$inc": {"deposit": to_float(order.get("total_amount"))}})
     await db.receivables.update_many({"transaction_id": order_id}, {"$set": {"status": "cancelled"}})

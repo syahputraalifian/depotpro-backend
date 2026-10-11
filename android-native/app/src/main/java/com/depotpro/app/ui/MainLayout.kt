@@ -145,8 +145,6 @@ private fun AppContent(
     val screens = screensFor(role)
     val loggedIn = role != null
 
-    val startRoute = remember { screensFor(role).firstOrNull()?.route ?: Screen.Login.route }
-
     val snackbarHostState = remember { SnackbarHostState() }
     var showPasswordDialog by remember { mutableStateOf(false) }
 
@@ -156,18 +154,20 @@ private fun AppContent(
 
     // Arahkan sesuai status login/peran (login berhasil, logout, sesi berakhir, atau menu tidak diizinkan).
     LaunchedEffect(session) {
-        val current = navController.currentDestination?.route
-        if (loggedIn) {
-            val allowed = screens.map { it.route }
-            if (current == Screen.Login.route || (current != null && current !in allowed)) {
-                navController.navigate(screens.first().route) {
+        if (loggedIn && screens.isNotEmpty()) {
+            val target = screens.first().route
+            if (currentRoute != target && (currentRoute == null || currentRoute == Screen.Login.route || currentRoute !in screens.map { it.route })) {
+                navController.navigate(target) {
                     popUpTo(0) { inclusive = true }
                     launchSingleTop = true
                 }
             }
-        } else if (current != null && current != Screen.Login.route) {
-            navController.navigate(Screen.Login.route) {
-                popUpTo(0) { inclusive = true }
+        } else if (!loggedIn) {
+            if (currentRoute != null && currentRoute != Screen.Login.route) {
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
     }
@@ -220,19 +220,27 @@ private fun AppContent(
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = startRoute,
+            startDestination = Screen.Login.route,
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Login.route) {
-                // Navigasi setelah login ditangani oleh efek sesi di atas.
-                LoginScreen(authViewModel = authViewModel, onLoginSuccess = { _ -> })
+                LoginScreen(
+                    authViewModel = authViewModel,
+                    onLoginSuccess = { userRole ->
+                        val target = screensFor(userRole).firstOrNull()?.route ?: Screen.Dashboard.route
+                        navController.navigate(target) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                )
             }
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     dashboardViewModel = dashboardViewModel,
                     authViewModel = authViewModel,
                     onLogout = {
-                        navController.navigate(Screen.Login.route) { popUpTo(0) { inclusive = true } }
+                        authViewModel.logout()
                     }
                 )
             }

@@ -37,8 +37,8 @@ def call(method, path, body=None, token=None):
 
 
 def check(name, got, expect, body=None):
-    if isinstance(expect, tuple) and len(expect) == 2 and isinstance(got, tuple) and len(got) == 2 and isinstance(expect[0], int) and isinstance(expect[1], bool):
-        ok = (got == expect)
+    if isinstance(expect, tuple) and isinstance(got, tuple):
+        ok = got == expect
     else:
         ok = got in (expect if isinstance(expect, (list, tuple)) else [expect])
     results.append((ok, name, got, body))
@@ -82,9 +82,11 @@ def main():
     check("POST /orders (checkout)", st, 200, b)
     cleanup.append(("DELETE", f"/orders/{oid}"))
     check("stok turun jadi 8", stock_of(tok, pid).get("stock"), 8)
+    check("wadah kosong +2 setelah penjualan langsung", stock_of(tok, pid).get("empty_gallon_stock"), 2)
     st, b = call("POST", "/orders", order, tok)
     check("POST /orders ulang (idempoten)", st, 200, b)
     check("stok tetap 8", stock_of(tok, pid).get("stock"), 8)
+    check("wadah kosong tetap 2 (idempoten)", stock_of(tok, pid).get("empty_gallon_stock"), 2)
     st, b = call("POST", "/orders", {**order, "id": str(uuid.uuid4()),
                                      "items": [{"product_id": pid, "product_name": "x", "quantity": 999, "price": 1.0}]}, tok)
     check("stok kurang ditolak (400)", st, 400, b)
@@ -108,7 +110,7 @@ def main():
         check("PATCH status on_delivery", st, 200, b)
         st, b = call("PATCH", f"/orders/{oid2}/status", {"status": "delivered", "gallons_returned": 1, "lpg_returned": 0}, tok)
         check("PATCH status delivered", st, 200, b)
-        check("galon kosong bertambah 1", stock_of(tok, pid).get("empty_gallon_stock"), 1)
+        check("galon kosong bertambah 1 saat pengiriman selesai (2 -> 3)", stock_of(tok, pid).get("empty_gallon_stock"), 3)
         st, drs = call("GET", "/drivers", token=tok)
         mine = [d for d in drs if d.get("id") == did] if isinstance(drs, list) else []
         check("driver: pengiriman selesai = 1", mine[0].get("completed_deliveries") if mine else None, 1)
@@ -162,6 +164,13 @@ def main():
     check("GET /dashboard", st, 200, b)
     st, b = call("GET", "/auth/me", token=tok)
     check("GET /auth/me", st, 200, b)
+
+    # ---- pembatalan mengembalikan stok & wadah kosong penjualan langsung
+    st, b = call("DELETE", f"/orders/{oid}", token=tok)
+    check("DELETE /orders (batal penjualan langsung)", st, 200, b)
+    pnow = stock_of(tok, pid)
+    check("stok kembali setelah batal (8 + 2 = 10, minus 1 pengiriman = 9)", pnow.get("stock"), 9)
+    check("wadah kosong kembali (3 - 2 = 1)", pnow.get("empty_gallon_stock"), 1)
 
     # ---- hak akses
     st, kb = call("POST", "/auth/login", {"email": "kasir@gasgalon.id", "password": "kasir12345"})

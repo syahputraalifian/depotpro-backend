@@ -117,7 +117,8 @@ fun DashboardScreen(
                             ) {
                                 Text("Grafik Tren Penjualan (7 Hari Terakhir)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
 
-                                val maxSales = current.dailySales.maxOfOrNull { it.amount } ?: 300000.0
+                                // Minimal 1.0 agar tidak terjadi 0/0 = NaN saat belum ada penjualan (NaN membuat aplikasi crash).
+                                val maxSales = (current.dailySales.maxOfOrNull { it.amount } ?: 0.0).coerceAtLeast(1.0)
 
                                 Row(
                                     modifier = Modifier
@@ -127,7 +128,8 @@ fun DashboardScreen(
                                     verticalAlignment = Alignment.Bottom
                                 ) {
                                     current.dailySales.forEach { item ->
-                                        val barHeightRatio = (item.amount / maxSales).toFloat().coerceIn(0.1f, 1.0f)
+                                        val rawRatio = (item.amount / maxSales).toFloat()
+                                        val barHeightRatio = if (rawRatio.isNaN()) 0.1f else rawRatio.coerceIn(0.1f, 1.0f)
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             verticalArrangement = Arrangement.Bottom,
