@@ -428,20 +428,35 @@ async def seed_database() -> None:
 
 
 async def _migrate_legacy() -> None:
-    # Produk lama yang hanya punya field `stock`
-    await db.products.update_many({"stock_filled": {"$exists": False}}, [{"$set": {"stock_filled": {"$ifNull": ["$stock", 0]}}}])
-    await db.products.update_many({"stock_empty": {"$exists": False}}, {"$set": {"stock_empty": 0}})
-    await db.products.update_many({"total_sold": {"$exists": False}}, {"$set": {"total_sold": 0}})
-    # User lama tanpa id
-    async for u in db.users.find({"id": {"$exists": False}}, {"_id": 1}):
-        await db.users.update_one({"_id": u["_id"]}, {"$set": {"id": new_id()}})
+    """Rapikan data dari versi lama. Tiap langkah berdiri sendiri: satu gagal tidak menghentikan yang lain."""
+    steps = []
+
+    # Dokumen lama yang hanya punya _id (tanpa field id): isi id dari _id supaya bisa diubah/dihapus dari aplikasi.
+    for name in ("products", "customers", "drivers", "transactions", "expenses", "receivables", "settlements"):
+        steps.append((f"id {name}", db[name].update_many({"id": {"$in": [None, ""]}}, [{"$set": {"id": {"$toString": "$_id"}}}])))
+    steps += [
+        ("stock_filled", db.products.update_many({"stock_filled": {"$in": [None]}}, [{"$set": {"stock_filled": {"$ifNull": ["$stock", 0]}}}])),
+        ("stock_empty", db.products.update_many({"stock_empty": {"$in": [None]}}, {"$set": {"stock_empty": 0}})),
+        ("total_sold", db.products.update_many({"total_sold": {"$in": [None]}}, {"$set": {"total_sold": 0}})),
+    ]
+    for label, coro in steps:
+        try:
+            await coro
+        except Exception:
+            logger.exception("Migrasi '%s' gagal", label)
+
+    try:  # User lama tanpa id
+        async for u in db.users.find({"id": {"$in": [None, ""]}}, {"_id": 1}):
+            await db.users.update_one({"_id": u["_id"]}, {"$set": {"id": new_id()}})
+    except Exception:
+        logger.exception("Migrasi 'users id' gagal")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Tiap tahap berdiri sendiri: kegagalan satu tahap tidak menggagalkan yang lain,
     # dan server tetap hidup agar /health bisa melaporkan masalahnya.
-    for label, step in (("index", _ensure_indexes), ("migrasi", _migrate_legacy), ("seed", seed_database)):
+    for label, step in (("migrasi", _migrate_legacy), ("index", _ensure_indexes), ("seed", seed_database)):
         try:
             await step()
         except Exception:
