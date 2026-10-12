@@ -101,7 +101,7 @@ class DepotRepository(private val api: ApiService) {
     suspend fun refreshProducts(silent: Boolean = false) = load(_products, silent) { api.getProducts() }
 
     suspend fun refreshOrders(silent: Boolean = false) = load(_orders, silent) {
-        api.getOrders().map { it.copy(createdAt = it.createdAtLabel ?: it.createdAt) }
+        api.getOrders(200).map { it.copy(createdAt = it.createdAtLabel ?: it.createdAt) }
     }
 
     suspend fun refreshCustomers(silent: Boolean = false) = load(_customers, silent) { api.getCustomers() }
@@ -114,27 +114,34 @@ class DepotRepository(private val api: ApiService) {
         load(_summary, silent) { api.getDashboardSummary() }
     }
 
-    /** Muat data sesuai hak akses peran ("owner", "kasir", "gudang", "driver"). */
-    suspend fun refreshAll(userRole: String, silent: Boolean = false) {
+    /**
+     * Muat data sesuai hak akses peran ("owner", "kasir", "gudang", "driver").
+     * [light] = hanya data yang sering berubah (stok, transaksi, ringkasan) agar hemat kuota & baterai.
+     */
+    suspend fun refreshAll(userRole: String, silent: Boolean = false, light: Boolean = false) {
         role = userRole
         coroutineScope {
             when (userRole) {
                 "owner" -> {
                     launch { refreshProducts(silent) }
                     launch { refreshOrders(silent) }
-                    launch { refreshCustomers(silent) }
-                    launch { refreshDrivers(silent) }
-                    launch { refreshExpenses(silent) }
-                    launch { refreshReceivables(silent) }
                     launch { refreshSummary(silent) }
+                    if (!light) {
+                        launch { refreshCustomers(silent) }
+                        launch { refreshDrivers(silent) }
+                        launch { refreshExpenses(silent) }
+                        launch { refreshReceivables(silent) }
+                    }
                 }
                 "kasir" -> {
                     launch { refreshProducts(silent) }
                     launch { refreshOrders(silent) }
-                    launch { refreshCustomers(silent) }
-                    launch { refreshDrivers(silent) }
-                    launch { refreshReceivables(silent) }
                     launch { refreshSummary(silent) }
+                    if (!light) {
+                        launch { refreshCustomers(silent) }
+                        launch { refreshDrivers(silent) }
+                        launch { refreshReceivables(silent) }
+                    }
                 }
                 "gudang" -> {
                     launch { refreshProducts(silent) }

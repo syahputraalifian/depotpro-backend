@@ -12,8 +12,8 @@ android {
         applicationId = "com.depotpro.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Ganti alamat server: ./gradlew assembleDebug -PapiBaseUrl=http://10.0.2.2:8000/api/
@@ -26,7 +26,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8: mengecilkan & mengoptimalkan kode, jauh lebih mulus di HP lama dibanding build debug.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Untuk dipasang langsung ke HP sendiri. Untuk Play Store, ganti dengan keystore rilis sendiri.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -82,6 +86,9 @@ dependencies {
 
     // DataStore Preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // Menerapkan baseline profile bawaan library Compose saat instal -> aplikasi lebih cepat dibuka/di-scroll
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

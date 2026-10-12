@@ -24,6 +24,7 @@ import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 data class ChangePasswordRequest(
     @SerializedName("old_password") val oldPassword: String,
@@ -63,7 +64,7 @@ interface ApiService {
 
     // ---- Order / transaksi
     @GET("orders")
-    suspend fun getOrders(): List<Order>
+    suspend fun getOrders(@Query("limit") limit: Int): List<Order>
 
     @POST("orders")
     suspend fun createOrder(@Body order: Order): Order

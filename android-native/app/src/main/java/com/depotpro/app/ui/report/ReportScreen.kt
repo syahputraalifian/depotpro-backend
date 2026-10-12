@@ -22,6 +22,8 @@ import java.util.Locale
 @Composable
 fun ReportScreen(reportViewModel: ReportViewModel, userRole: String?) {
     val state by reportViewModel.state.collectAsState()
+    // Daftar riwayat tidak lazy: render bertahap agar layar tidak berat di HP lama.
+    var visibleCount by remember { mutableStateOf(30) }
     val currencyFormatter = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
     val isOwner = userRole == "owner"
 
@@ -109,7 +111,7 @@ fun ReportScreen(reportViewModel: ReportViewModel, userRole: String?) {
                         if (current.orders.isEmpty()) {
                             Text("Belum ada transaksi tercatat.", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            current.orders.forEach { order ->
+                            current.orders.take(visibleCount).forEach { order ->
                                 Card(
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -159,6 +161,12 @@ fun ReportScreen(reportViewModel: ReportViewModel, userRole: String?) {
                                         }
                                     }
                                 }
+                            }
+                            if (current.orders.size > visibleCount) {
+                                OutlinedButton(
+                                    onClick = { visibleCount += 30 },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Tampilkan lebih banyak (${current.orders.size - visibleCount} lagi)") }
                             }
                         }
 

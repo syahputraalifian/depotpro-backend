@@ -7,6 +7,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -49,10 +54,11 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 authViewModel.userRole.collectLatest { role ->
                     if (role != null) {
-                        var first = true
+                        var tick = 0
                         while (true) {
-                            container.depotRepository.refreshAll(role, silent = !first)
-                            first = false
+                            // Penuh (semua data) tiap 4 putaran = 60 detik; sisanya hanya stok/transaksi/ringkasan.
+                            container.depotRepository.refreshAll(role, silent = tick > 0, light = tick % 4 != 0)
+                            tick++
                             delay(15_000)
                         }
                     }
@@ -61,23 +67,34 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            DepotProTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    MainLayout(
-                        authViewModel = authViewModel,
-                        dashboardViewModel = dashboardViewModel,
-                        posViewModel = posViewModel,
-                        stokViewModel = stokViewModel,
-                        driverViewModel = driverViewModel,
-                        customerViewModel = customerViewModel,
-                        reportViewModel = reportViewModel,
-                        expenseViewModel = expenseViewModel,
-                        receivableViewModel = receivableViewModel,
-                        messages = container.depotRepository.messages
-                    )
+            val fontScale by container.tokenManager.fontScaleFlow.collectAsState(initial = 1.0f)
+            val baseDensity = LocalDensity.current
+            // Skala huruf pilihan pengguna dikalikan skala sistem, berlaku untuk seluruh aplikasi.
+            CompositionLocalProvider(
+                LocalDensity provides Density(baseDensity.density, baseDensity.fontScale * fontScale)
+            ) {
+                DepotProTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MainLayout(
+                            authViewModel = authViewModel,
+                            dashboardViewModel = dashboardViewModel,
+                            posViewModel = posViewModel,
+                            stokViewModel = stokViewModel,
+                            driverViewModel = driverViewModel,
+                            customerViewModel = customerViewModel,
+                            reportViewModel = reportViewModel,
+                            expenseViewModel = expenseViewModel,
+                            receivableViewModel = receivableViewModel,
+                            messages = container.depotRepository.messages,
+                            fontScale = fontScale,
+                            onFontScaleChange = { scale ->
+                                lifecycleScope.launch { container.tokenManager.saveFontScale(scale) }
+                            }
+                        )
+                    }
                 }
             }
         }

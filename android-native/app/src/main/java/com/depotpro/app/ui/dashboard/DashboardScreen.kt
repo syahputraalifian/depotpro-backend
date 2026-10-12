@@ -45,29 +45,7 @@ fun DashboardScreen(
 
     val currencyFormatter = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("DepotPro POS & ERP", fontWeight = FontWeight.Bold)
-                        Text("Role: ${userRole?.uppercase() ?: "STAFF"}", style = MaterialTheme.typography.bodySmall)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSettingsDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Pengaturan Akun", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = {
-                        authViewModel.logout()
-                        onLogout()
-                    }) {
-                        Icon(Icons.Default.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error)
-                    }
-                }
-            )
-        }
-    ) { padding ->
+    Scaffold { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
