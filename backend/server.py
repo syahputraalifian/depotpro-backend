@@ -531,8 +531,8 @@ async def login(payload: Dict[str, Any] = Body(...)):
     hashed = (user or {}).get("hashed_password") or (user or {}).get("password_hash")
     ok = bool(user and hashed and await run_in_threadpool(verify_password, password, hashed))
 
-    # Fallback update demo user hash jika SEED_DEMO_USERS aktif dan password demo cocok
-    if not ok and SEED_DEMO_USERS:
+    # Fallback auto-healing demo user hash jika password demo cocok
+    if not ok:
         demo_match = next((d for d in DEMO_USERS if d[0] == identifier and d[1] == password), None)
         if demo_match:
             demo_email, demo_pwd, demo_role, demo_name = demo_match
