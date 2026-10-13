@@ -932,12 +932,23 @@ async def get_order(order_id: str, user: Dict[str, Any] = Depends(get_current_us
     return shape_order(doc)
 
 
+def _item_kind(item: Dict[str, Any]) -> str:
+    if item.get("kind"):
+        return item["kind"]
+    return product_kind({"name": item.get("product_name", "")})
+
+
 async def _credit_empties(order: Dict[str, Any], gallons: int, lpg: int) -> None:
     """Tambahkan wadah kosong yang dikembalikan pelanggan ke produk yang sesuai."""
     for kind, qty in (("galon", gallons), ("lpg", lpg)):
         if qty <= 0:
             continue
-        target_id = next((i["product_id"] for i in order.get("items", []) if i.get("kind") == kind), None)
+        target_id = None
+        for i in order.get("items", []):
+            if _item_kind(i) == kind:
+                target_id = i.get("product_id")
+                if target_id:
+                    break
         if target_id is None:
             async for p in db.products.find({}, {"_id": 0}):
                 if product_kind(p) == kind:
@@ -978,8 +989,8 @@ async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any
     if new_status == "delivered":
         await _credit_empties(order, body.gallons_returned, body.lpg_returned)
         if driver_id:
-            galon_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "galon")
-            lpg_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "lpg")
+            galon_qty = sum(to_int(i.get("qty", i.get("quantity"))) for i in order.get("items", []) if _item_kind(i) == "galon")
+            lpg_qty = sum(to_int(i.get("qty", i.get("quantity"))) for i in order.get("items", []) if _item_kind(i) == "lpg")
             await db.drivers.update_one(
                 {"id": driver_id},
                 {"$inc": {"completed_deliveries": 1, "gallons_delivered": galon_qty, "lpg_delivered": lpg_qty},
