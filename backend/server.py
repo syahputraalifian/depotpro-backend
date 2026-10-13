@@ -194,7 +194,7 @@ def http_error(code: int, detail: str) -> HTTPException:
 # AUTH
 # ==========================================
 _login_failures: Dict[str, List[float]] = {}
-MAX_LOGIN_FAILURES = 8
+MAX_LOGIN_FAILURES = 15
 LOGIN_WINDOW_SECONDS = 600
 
 
