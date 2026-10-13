@@ -100,12 +100,7 @@ def product_kind(product: Dict[str, Any]) -> str:
         return "lpg"
     category = str(product.get("category") or "").strip().lower()
     name = str(product.get("name") or "").lower()
-    unit = str(product.get("unit") or "").lower()
-
-    if any(w in name or w in unit for w in ("dus", "gelas", "botol", "karton", "box")):
-        return "other"
-
-    if category in {"water", "air isi ulang", "galon"} or any(w in name for w in ("galon", "isi ulang", "tukar isi")):
+    if category in {"water", "air isi ulang", "galon"} or "galon" in name or "isi ulang" in name:
         return "galon"
     return "other"
 

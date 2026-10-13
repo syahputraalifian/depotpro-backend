@@ -33,8 +33,8 @@ fun LoginScreen(
     val context = LocalContext.current
     val authState by authViewModel.authState.collectAsState()
 
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("owner@gasgalon.id") }
+    var password by remember { mutableStateOf("sukahar12345") }
 
     LaunchedEffect(authState) {
         when (val state = authState) {
@@ -173,7 +173,7 @@ fun LoginScreen(
                             selected = email == "owner@gasgalon.id",
                             onClick = {
                                 email = "owner@gasgalon.id"
-                                password = ""
+                                password = "sukahar12345"
                             },
                             label = { Text("Owner", style = MaterialTheme.typography.labelSmall) }
                         )
@@ -181,7 +181,7 @@ fun LoginScreen(
                             selected = email == "kasir@gasgalon.id",
                             onClick = {
                                 email = "kasir@gasgalon.id"
-                                password = ""
+                                password = "kasir12345"
                             },
                             label = { Text("Kasir", style = MaterialTheme.typography.labelSmall) }
                         )
@@ -189,7 +189,7 @@ fun LoginScreen(
                             selected = email == "gudang@gasgalon.id",
                             onClick = {
                                 email = "gudang@gasgalon.id"
-                                password = ""
+                                password = "gudang12345"
                             },
                             label = { Text("Gudang", style = MaterialTheme.typography.labelSmall) }
                         )
@@ -197,7 +197,7 @@ fun LoginScreen(
                             selected = email == "driver@gasgalon.id",
                             onClick = {
                                 email = "driver@gasgalon.id"
-                                password = ""
+                                password = "driver12345"
                             },
                             label = { Text("Driver", style = MaterialTheme.typography.labelSmall) }
                         )
