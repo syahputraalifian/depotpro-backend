@@ -49,6 +49,7 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
     var emptyLpgExchanged by remember { mutableStateOf("0") }
 
     var deliveryFilter by remember { mutableStateOf("belum") }
+    var salaryDriver by remember { mutableStateOf<Driver?>(null) }
 
     fun openAddDialog() {
         editingDriver = null
@@ -64,6 +65,17 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
         phone = d.phone ?: "08198765432"
         status = d.status ?: "available"
         showDialog = true
+    }
+
+    salaryDriver?.let { d ->
+        SalaryDialog(
+            driver = d,
+            onDismiss = { salaryDriver = null },
+            onSave = { base, gallonRate, lpgRate, fuel, deductions ->
+                d.id?.let { driverViewModel.updateSalary(it, base, gallonRate, lpgRate, fuel, deductions) }
+                salaryDriver = null
+            }
+        )
     }
 
     Scaffold(
@@ -96,7 +108,7 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         item {
-                            Text("Rekap Finansial & Gaji Kurir (Gaji Pokok 25rb)", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            Text("Rekap Finansial & Gaji Kurir", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         }
 
                         if (current.drivers.isEmpty()) {
@@ -140,8 +152,8 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                                         ) {
                                             Column {
                                                 Text("Gaji Pokok Harian:", style = MaterialTheme.typography.bodySmall)
-                                                Text("Komisi Galon/AMDK (${driver.gallonsDelivered}x @Rp 750):", style = MaterialTheme.typography.bodySmall)
-                                                Text("Komisi LPG Gas (${driver.lpgDelivered}x @Rp 500):", style = MaterialTheme.typography.bodySmall)
+                                                Text("Komisi Galon/AMDK (${driver.gallonsDelivered}x @Rp ${driver.gallonCommissionRate.toLong()}):", style = MaterialTheme.typography.bodySmall)
+                                                Text("Komisi LPG Gas (${driver.lpgDelivered}x @Rp ${driver.lpgCommissionRate.toLong()}):", style = MaterialTheme.typography.bodySmall)
                                                 Text("Uang Bensin Harian:", style = MaterialTheme.typography.bodySmall)
                                             }
                                             Column(horizontalAlignment = Alignment.End) {
@@ -186,6 +198,13 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                                                     }
                                                 }
                                             }
+                                        }
+
+                                        if (canManage) {
+                                            OutlinedButton(
+                                                onClick = { salaryDriver = driver },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text("Atur Gaji & Komisi") }
                                         }
                                     }
                                 }

@@ -12,6 +12,7 @@ import com.depotpro.app.ui.expense.ExpenseViewModel
 import com.depotpro.app.ui.pos.PosViewModel
 import com.depotpro.app.ui.receivable.ReceivableViewModel
 import com.depotpro.app.ui.report.ReportViewModel
+import com.depotpro.app.ui.setoran.SetoranViewModel
 import com.depotpro.app.ui.stok.StokViewModel
 import com.depotpro.app.ui.users.UsersViewModel
 
@@ -32,6 +33,7 @@ class AppViewModelFactory(private val container: AppContainer) : ViewModelProvid
             modelClass.isAssignableFrom(ReceivableViewModel::class.java) -> ReceivableViewModel(repo)
             modelClass.isAssignableFrom(ClosingViewModel::class.java) -> ClosingViewModel(repo)
             modelClass.isAssignableFrom(UsersViewModel::class.java) -> UsersViewModel(repo)
+            modelClass.isAssignableFrom(SetoranViewModel::class.java) -> SetoranViewModel(repo)
             else -> throw IllegalArgumentException("ViewModel tidak dikenal: ${modelClass.name}")
         }
         return viewModel as T

@@ -26,6 +26,7 @@ import com.depotpro.app.ui.expense.ExpenseViewModel
 import com.depotpro.app.ui.pos.PosViewModel
 import com.depotpro.app.ui.receivable.ReceivableViewModel
 import com.depotpro.app.ui.report.ReportViewModel
+import com.depotpro.app.ui.setoran.SetoranViewModel
 import com.depotpro.app.ui.stok.StokViewModel
 import com.depotpro.app.ui.users.UsersViewModel
 import com.depotpro.app.ui.theme.DepotProTheme
@@ -49,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private val receivableViewModel: ReceivableViewModel by viewModels { factory }
     private val closingViewModel: ClosingViewModel by viewModels { factory }
     private val usersViewModel: UsersViewModel by viewModels { factory }
+    private val setoranViewModel: SetoranViewModel by viewModels { factory }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,6 +96,7 @@ class MainActivity : ComponentActivity() {
                             receivableViewModel = receivableViewModel,
                             closingViewModel = closingViewModel,
                             usersViewModel = usersViewModel,
+                            setoranViewModel = setoranViewModel,
                             messages = container.depotRepository.messages,
                             fontScale = fontScale,
                             onFontScaleChange = { scale ->

@@ -6,6 +6,10 @@ import com.depotpro.app.data.model.AccountCreate
 import com.depotpro.app.data.model.AccountUpdate
 import com.depotpro.app.data.model.AccountUser
 import com.depotpro.app.data.model.AdjustRequest
+import com.depotpro.app.data.model.CashOutstanding
+import com.depotpro.app.data.model.ConfirmSettlementRequest
+import com.depotpro.app.data.model.DriverSettlementRequest
+import com.depotpro.app.data.model.SettlementItem
 import com.depotpro.app.data.model.ClosingRequest
 import com.depotpro.app.data.model.Customer
 import com.depotpro.app.data.model.DailyReport
@@ -52,6 +56,8 @@ class DepotRepository(private val api: ApiService) {
     private val _summary = MutableStateFlow<Load<DashboardSummary>>(Load.Loading)
     private val _daily = MutableStateFlow<Load<DailyReport>>(Load.Loading)
     private val _users = MutableStateFlow<Load<List<AccountUser>>>(Load.Loading)
+    private val _settlements = MutableStateFlow<Load<List<SettlementItem>>>(Load.Loading)
+    private val _outstanding = MutableStateFlow<Load<List<CashOutstanding>>>(Load.Loading)
 
     val productsState: StateFlow<Load<List<Product>>> = _products.asStateFlow()
     val ordersState: StateFlow<Load<List<Order>>> = _orders.asStateFlow()
@@ -62,6 +68,8 @@ class DepotRepository(private val api: ApiService) {
     val summaryState: StateFlow<Load<DashboardSummary>> = _summary.asStateFlow()
     val dailyState: StateFlow<Load<DailyReport>> = _daily.asStateFlow()
     val usersState: StateFlow<Load<List<AccountUser>>> = _users.asStateFlow()
+    val settlementsState: StateFlow<Load<List<SettlementItem>>> = _settlements.asStateFlow()
+    val outstandingState: StateFlow<Load<List<CashOutstanding>>> = _outstanding.asStateFlow()
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** Pesan untuk ditampilkan ke pengguna (error/sukses). */
@@ -120,6 +128,8 @@ class DepotRepository(private val api: ApiService) {
 
     suspend fun refreshDaily(silent: Boolean = false) = load(_daily, silent) { api.getDailyReport() }
     suspend fun refreshUsers(silent: Boolean = false) = load(_users, silent) { api.getUsers() }
+    suspend fun refreshSettlements(silent: Boolean = false) = load(_settlements, silent) { api.getSettlements() }
+    suspend fun refreshOutstanding(silent: Boolean = false) = load(_outstanding, silent) { api.getCashOutstanding() }
 
     suspend fun refreshSummary(silent: Boolean = false) {
         if (!canSeeSummary) return
@@ -138,6 +148,8 @@ class DepotRepository(private val api: ApiService) {
                     launch { refreshProducts(silent) }
                     launch { refreshOrders(silent) }
                     launch { refreshSummary(silent) }
+                    launch { refreshSettlements(silent) }
+                    launch { refreshOutstanding(silent) }
                     if (!light) {
                         launch { refreshCustomers(silent) }
                         launch { refreshDrivers(silent) }
@@ -150,6 +162,8 @@ class DepotRepository(private val api: ApiService) {
                     launch { refreshProducts(silent) }
                     launch { refreshOrders(silent) }
                     launch { refreshSummary(silent) }
+                    launch { refreshSettlements(silent) }
+                    launch { refreshOutstanding(silent) }
                     if (!light) {
                         launch { refreshCustomers(silent) }
                         launch { refreshDrivers(silent) }
@@ -162,6 +176,8 @@ class DepotRepository(private val api: ApiService) {
                 "driver" -> {
                     launch { refreshOrders(silent) }
                     launch { refreshDrivers(silent) }
+                    launch { refreshSettlements(silent) }
+                    launch { refreshOutstanding(silent) }
                 }
             }
         }
@@ -179,6 +195,8 @@ class DepotRepository(private val api: ApiService) {
         _summary.value = Load.Loading
         _daily.value = Load.Loading
         _users.value = Load.Loading
+        _settlements.value = Load.Loading
+        _outstanding.value = Load.Loading
     }
 
     fun currentProducts(): List<Product> = _products.value.dataOrEmpty()
@@ -410,6 +428,24 @@ class DepotRepository(private val api: ApiService) {
         notify("Akun dihapus")
         refreshUsers()
         refreshDrivers()
+        return true
+    }
+
+    // ------------------------------------------------- setoran uang driver
+    /** Driver menyetor seluruh uang tunai pengiriman. Untuk owner/kasir: wajib isi [driverId]. Mengembalikan setoran tersimpan. */
+    suspend fun createDriverSettlement(driverId: String?, note: String?): SettlementItem? {
+        val saved = mutate { api.createDriverSettlement(DriverSettlementRequest(driverId, note)) } ?: return null
+        refreshSettlements()
+        refreshOutstanding()
+        return saved
+    }
+
+    suspend fun confirmSettlement(id: String, receivedAmount: Double?, note: String?): Boolean {
+        mutate { api.confirmSettlement(id, ConfirmSettlementRequest(receivedAmount, note)) } ?: return false
+        notify("Setoran diterima")
+        refreshSettlements()
+        refreshOutstanding()
+        refreshSummary()
         return true
     }
 }

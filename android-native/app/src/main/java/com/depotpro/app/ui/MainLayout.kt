@@ -77,6 +77,8 @@ import com.depotpro.app.ui.receivable.ReceivableScreen
 import com.depotpro.app.ui.receivable.ReceivableViewModel
 import com.depotpro.app.ui.report.ReportScreen
 import com.depotpro.app.ui.report.ReportViewModel
+import com.depotpro.app.ui.setoran.SetoranScreen
+import com.depotpro.app.ui.setoran.SetoranViewModel
 import com.depotpro.app.ui.stok.StokScreen
 import com.depotpro.app.ui.stok.StokViewModel
 import com.depotpro.app.ui.users.UsersScreen
@@ -89,11 +91,11 @@ private fun screensFor(role: String?): List<Screen> = when (role) {
     "owner" -> listOf(
         Screen.Dashboard, Screen.Pos, Screen.Stok, Screen.Driver,
         Screen.Customer, Screen.Report, Screen.Expense, Screen.Receivable,
-        Screen.Closing, Screen.Users
+        Screen.Closing, Screen.Setoran, Screen.Users
     )
-    "kasir" -> listOf(Screen.Pos, Screen.Customer, Screen.Receivable, Screen.Closing, Screen.Report, Screen.Dashboard)
+    "kasir" -> listOf(Screen.Pos, Screen.Customer, Screen.Receivable, Screen.Closing, Screen.Setoran, Screen.Report, Screen.Dashboard)
     "gudang" -> listOf(Screen.Stok)
-    "driver" -> listOf(Screen.Driver)
+    "driver" -> listOf(Screen.Driver, Screen.Setoran)
     else -> emptyList()
 }
 
@@ -125,6 +127,7 @@ fun MainLayout(
     receivableViewModel: ReceivableViewModel,
     closingViewModel: ClosingViewModel,
     usersViewModel: UsersViewModel,
+    setoranViewModel: SetoranViewModel,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -149,6 +152,7 @@ fun MainLayout(
             receivableViewModel = receivableViewModel,
             closingViewModel = closingViewModel,
             usersViewModel = usersViewModel,
+            setoranViewModel = setoranViewModel,
             messages = messages,
             fontScale = fontScale,
             onFontScaleChange = onFontScaleChange
@@ -170,6 +174,7 @@ private fun AppContent(
     receivableViewModel: ReceivableViewModel,
     closingViewModel: ClosingViewModel,
     usersViewModel: UsersViewModel,
+    setoranViewModel: SetoranViewModel,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -313,6 +318,7 @@ private fun AppContent(
             composable(Screen.Receivable.route) { ReceivableScreen(receivableViewModel = receivableViewModel) }
             composable(Screen.Closing.route) { ClosingScreen(closingViewModel = closingViewModel) }
             composable(Screen.Users.route) { UsersScreen(usersViewModel = usersViewModel) }
+            composable(Screen.Setoran.route) { SetoranScreen(setoranViewModel = setoranViewModel, userRole = role) }
         }
     }
 

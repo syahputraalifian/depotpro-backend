@@ -36,3 +36,12 @@ Catatan: GitHub menonaktifkan workflow terjadwal bila repositori tidak ada aktiv
 ## 4. Akun staf
 Menu **Akun** (khusus Pemilik) untuk menambah staf, mengganti peran, reset password, menonaktifkan akun.
 Akun **Driver** harus dihubungkan ke data driver supaya driver hanya melihat tugasnya sendiri.
+
+## 5. Setoran uang driver & wadah kosong
+- **Wadah kosong** bertambah saat driver menandai pengiriman selesai dan mengisi jumlah galon/tabung yang kembali.
+  Wadah dikreditkan ke produk di pesanan itu (apa pun kategorinya). Penjualan langsung di toko menambahnya otomatis.
+- **Setoran uang:** uang tunai dari pengiriman dianggap di tangan driver sampai disetor. Driver membuka menu **Setoran** >
+  *Setor Uang ke Toko*; kasir/pemilik menghitung uangnya lalu menekan **Terima** (selisih tercatat). Pemilik/kasir juga
+  bisa memakai *Terima Tunai* bila driver menyerahkan uang langsung.
+- **Tutup Kasir:** uang tunai pengiriman baru dihitung masuk laci saat setorannya diterima.
+- **Gaji driver:** menu **Driver** > kartu driver > *Atur Gaji & Komisi* (khusus pemilik).

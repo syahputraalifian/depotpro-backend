@@ -1,7 +1,9 @@
 package com.depotpro.app.ui.pos
 
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 /** Nama usaha pada struk. Ubah di sini bila perlu. */
 const val STORE_NAME = "DepotPro"
@@ -19,6 +21,21 @@ fun rupiah(value: Double): String {
     val format = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
     format.maximumFractionDigits = 0
     return format.format(value)
+}
+
+/** Ubah waktu ISO (UTC) dari server menjadi teks WIB yang mudah dibaca. */
+fun formatWib(iso: String?): String {
+    if (iso.isNullOrBlank() || iso.length < 19) return iso ?: "-"
+    return try {
+        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        parser.timeZone = TimeZone.getTimeZone("UTC")
+        val date = parser.parse(iso.substring(0, 19)) ?: return iso
+        val out = SimpleDateFormat("dd MMM yyyy HH:mm", Locale("id", "ID"))
+        out.timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+        out.format(date)
+    } catch (e: Exception) {
+        iso
+    }
 }
 
 /** Teks struk sederhana (monospace) untuk ditampilkan dan dibagikan lewat WhatsApp/printer. */

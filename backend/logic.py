@@ -294,8 +294,12 @@ def build_daily_report(
     expenses: List[Dict[str, Any]],
     receivables: List[Dict[str, Any]],
     day: date,
+    settlements: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Ringkasan satu hari (zona WIB) untuk tutup kasir. Pengeluaran dianggap dibayar tunai dari laci."""
+    """Ringkasan satu hari (zona WIB) untuk tutup kasir. Pengeluaran dianggap dibayar tunai dari laci.
+
+    Uang tunai pesanan yang diantar driver BARU masuk laci saat setorannya diterima (settlements).
+    """
     todays = [o for o in orders if local_date(o.get("created_at")) == day]
     active = [o for o in todays if o.get("status") != "cancelled"]
     cancelled = [o for o in todays if o.get("status") == "cancelled"]
@@ -333,6 +337,15 @@ def build_daily_report(
                 rec_cash += amount
 
     cash_sales = by_method.get("cash", {}).get("amount", 0.0)
+    delivery_cash = sum(
+        to_float(o.get("total_amount"))
+        for o in active
+        if str(o.get("payment_method") or o.get("payment_type") or "cash").strip().lower() == "cash" and o.get("driver_id")
+    )
+    drawer_cash_sales = cash_sales - delivery_cash
+    settlements_received = sum(
+        to_float(x.get("received_amount", x.get("amount"))) for x in (settlements or []) if x.get("status") == "confirmed"
+    )
     return {
         "date": day_text,
         "orders_count": len(active),
@@ -347,5 +360,8 @@ def build_daily_report(
         "receivable_payments_total": rec_total,
         "receivable_payments_cash": rec_cash,
         "cash_sales": cash_sales,
-        "expected_cash": cash_sales + rec_cash - expenses_total,
+        "drawer_cash_sales": drawer_cash_sales,
+        "delivery_cash_sales": delivery_cash,
+        "driver_settlements_received": settlements_received,
+        "expected_cash": drawer_cash_sales + settlements_received + rec_cash - expenses_total,
     }

@@ -74,6 +74,7 @@ private fun summaryText(r: DailyReport, counted: Double?): String {
     sb.appendLine("Total penjualan: ${rupiah(r.totalSales)}")
     r.byMethod.orEmpty().forEach { sb.appendLine("  - ${paymentLabel(it.method)} (${it.count}x): ${rupiah(it.amount)}") }
     sb.appendLine("Pengeluaran: ${rupiah(r.expensesTotal)}")
+    sb.appendLine("Setoran driver diterima: ${rupiah(r.driverSettlementsReceived)}")
     sb.appendLine("Pembayaran piutang tunai: ${rupiah(r.receivablePaymentsCash)}")
     sb.appendLine("Uang seharusnya di laci: ${rupiah(r.expectedCash)}")
     if (counted != null) {
@@ -127,13 +128,22 @@ private fun ClosingContent(report: DailyReport, onReload: () -> Unit, onSave: (D
             }
         }
 
+        if (report.driverCashOutstanding > 0) {
+            Text(
+                "Uang tunai di tangan driver (belum disetor): ${rupiah(report.driverCashOutstanding)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Hitungan Uang di Laci (Tunai)", fontWeight = FontWeight.Bold)
-                LineRow("Penjualan tunai", rupiah(report.cashSales))
+                LineRow("Penjualan tunai di toko", rupiah(report.drawerCashSales))
+                LineRow("+ Setoran driver diterima", rupiah(report.driverSettlementsReceived))
                 LineRow("+ Pembayaran piutang tunai", rupiah(report.receivablePaymentsCash))
                 LineRow("- Pengeluaran (dianggap tunai)", rupiah(report.expensesTotal))
                 Divider()

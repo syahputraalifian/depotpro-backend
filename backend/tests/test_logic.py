@@ -172,6 +172,21 @@ class DailyReportTests(unittest.TestCase):
         self.assertEqual(r["by_method"][0]["method"], "cash")
         self.assertEqual(r["items_sold"][0], {"product_name": "Galon", "qty": 3, "amount": 50000.0})
 
+    def test_driver_cash_enters_drawer_only_after_settlement(self):
+        day = date(2026, 10, 10)
+        orders = [
+            {"created_at": "2026-10-10T03:00:00+00:00", "total_amount": 10000, "payment_method": "cash", "items": []},
+            {"created_at": "2026-10-10T04:00:00+00:00", "total_amount": 40000, "payment_method": "cash", "driver_id": "d1", "items": []},
+        ]
+        r = L.build_daily_report(orders, [], [], day, [])
+        self.assertEqual(r["cash_sales"], 50000)
+        self.assertEqual(r["drawer_cash_sales"], 10000)
+        self.assertEqual(r["delivery_cash_sales"], 40000)
+        self.assertEqual(r["expected_cash"], 10000)  # uang driver belum disetor
+        r2 = L.build_daily_report(orders, [], [], day, [{"status": "confirmed", "amount": 40000, "received_amount": 39000}])
+        self.assertEqual(r2["driver_settlements_received"], 39000)
+        self.assertEqual(r2["expected_cash"], 49000)
+
     def test_empty_day(self):
         r = L.build_daily_report([], [], [], date(2026, 10, 10))
         self.assertEqual(r["expected_cash"], 0)

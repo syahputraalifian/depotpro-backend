@@ -398,6 +398,16 @@ class UserIn(_Base):
     driver_id: Optional[str] = None  # hubungkan akun driver ke data driver ("" = lepas)
 
 
+class DriverSettlementIn(_Base):
+    driver_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ConfirmIn(_Base):
+    received_amount: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = None
+
+
 class ClosingIn(_Base):
     date: Optional[str] = None
     counted_cash: float = Field(..., ge=0)
@@ -932,30 +942,32 @@ async def get_order(order_id: str, user: Dict[str, Any] = Depends(get_current_us
     return shape_order(doc)
 
 
-def _item_kind(item: Dict[str, Any]) -> str:
-    if item.get("kind"):
-        return item["kind"]
-    return product_kind({"name": item.get("product_name", "")})
-
-
 async def _credit_empties(order: Dict[str, Any], gallons: int, lpg: int) -> None:
-    """Tambahkan wadah kosong yang dikembalikan pelanggan ke produk yang sesuai."""
-    for kind, qty in (("galon", gallons), ("lpg", lpg)):
-        if qty <= 0:
-            continue
-        target_id = None
-        for i in order.get("items", []):
-            if _item_kind(i) == kind:
-                target_id = i.get("product_id")
-                if target_id:
-                    break
-        if target_id is None:
-            async for p in db.products.find({}, {"_id": 0}):
-                if product_kind(p) == kind:
-                    target_id = p["id"]
-                    break
-        if target_id:
-            await db.products.update_one({"id": target_id}, {"$inc": {"stock_empty": qty}})
+    """Tambahkan wadah kosong yang dikembalikan pelanggan.
+
+    Target dipilih dari produk di pesanan itu sendiri (apa pun kategorinya, mis. 'Aqua' berkategori AMDK),
+    baru jatuh ke katalog bila pesanan tidak punya produk yang cocok.
+    """
+    items = [i for i in order.get("items", []) if i.get("product_id")]
+    tracked = [i for i in items if i.get("tracks_empty", True)]
+
+    async def catalog_target(kind_ok) -> Optional[str]:
+        async for p in db.products.find({}, {"_id": 0}):
+            if p.get("track_empty") is not False and kind_ok(product_kind(p)):
+                return p["id"]
+        return None
+
+    if gallons > 0:
+        target = next((i["product_id"] for i in tracked if i.get("kind") == "galon"), None) \
+            or next((i["product_id"] for i in tracked if i.get("kind") != "lpg"), None) \
+            or await catalog_target(lambda k: k == "galon")
+        if target:
+            await db.products.update_one({"id": target}, {"$inc": {"stock_empty": gallons}})
+    if lpg > 0:
+        target = next((i["product_id"] for i in tracked if i.get("kind") == "lpg"), None) \
+            or await catalog_target(lambda k: k == "lpg")
+        if target:
+            await db.products.update_one({"id": target}, {"$inc": {"stock_empty": lpg}})
 
 
 @api.patch("/orders/{order_id}/status")
@@ -980,6 +992,8 @@ async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any
     changes: Dict[str, Any] = {"status": new_status, "status_updated_at": now_iso(), "status_updated_by": user["email"]}
     if body.note:
         changes["delivery_note"] = body.note
+    if new_status == "delivered":
+        changes["empties_returned"] = {"gallons": body.gallons_returned, "lpg": body.lpg_returned}
     await db.transactions.update_one({"id": order_id}, {"$set": changes})
     order.update(changes)
 
@@ -989,8 +1003,8 @@ async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any
     if new_status == "delivered":
         await _credit_empties(order, body.gallons_returned, body.lpg_returned)
         if driver_id:
-            galon_qty = sum(to_int(i.get("qty", i.get("quantity"))) for i in order.get("items", []) if _item_kind(i) == "galon")
-            lpg_qty = sum(to_int(i.get("qty", i.get("quantity"))) for i in order.get("items", []) if _item_kind(i) == "lpg")
+            galon_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "galon")
+            lpg_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "lpg")
             await db.drivers.update_one(
                 {"id": driver_id},
                 {"$inc": {"completed_deliveries": 1, "gallons_delivered": galon_qty, "lpg_delivered": lpg_qty},
@@ -1110,7 +1124,13 @@ async def _daily_report(day: ddate) -> Dict[str, Any]:
     orders = [d async for d in db.transactions.find({"created_at": {"$gte": start, "$lt": end}}, {"_id": 0})]
     expenses = [d async for d in db.expenses.find({"date": day.isoformat()}, {"_id": 0})]
     receivables = [d async for d in db.receivables.find({"payments.at": {"$gte": start, "$lt": end}}, {"_id": 0})]
-    return build_daily_report(orders, expenses, receivables, day)
+    settlements = [d async for d in db.settlements.find({"status": "confirmed", "confirmed_at": {"$gte": start, "$lt": end}}, {"_id": 0})]
+    report = build_daily_report(orders, expenses, receivables, day, settlements)
+    outstanding = 0.0
+    async for o in db.transactions.find(_CASH_OUTSTANDING_QUERY, {"_id": 0, "total_amount": 1}):
+        outstanding += to_float(o.get("total_amount"))
+    report["driver_cash_outstanding"] = outstanding
+    return report
 
 
 @api.get("/reports/daily")
@@ -1427,26 +1447,114 @@ async def delete_receivable(rec_id: str, _: Dict[str, Any] = Depends(require_rol
 
 
 # --------------------------------------------------------------- setoran
+_CASH_OUTSTANDING_QUERY = {
+    "driver_id": {"$nin": [None, ""]},
+    "payment_method": "cash",
+    "status": "delivered",
+    "settlement_id": {"$exists": False},
+}
+
+
 @api.get("/settlements")
 async def list_settlements(user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    query = {} if user["role"] == OWNER else {"user_email": user["email"]}
-    return [d async for d in db.settlements.find(query, {"_id": 0}).sort("created_at", -1).limit(500)]
+    if user["role"] == DRIVER:
+        own = await linked_driver_id(user)
+        query: Dict[str, Any] = {"$or": [{"driver_id": own}, {"user_email": user["email"]}]} if own else {"user_email": user["email"]}
+    else:
+        query = {}
+    return [d async for d in db.settlements.find(query, {"_id": 0}).sort("created_at", -1).limit(300)]
+
+
+@api.get("/settlements/outstanding")
+async def settlements_outstanding(user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
+    """Uang tunai hasil pengiriman yang masih di tangan driver (belum disetor)."""
+    query = dict(_CASH_OUTSTANDING_QUERY)
+    if user["role"] == DRIVER:
+        own = await linked_driver_id(user)
+        if not own:
+            return []
+        query["driver_id"] = own
+    totals: Dict[str, Dict[str, Any]] = {}
+    async for o in db.transactions.find(query, {"_id": 0, "driver_id": 1, "driver_name": 1, "total_amount": 1}):
+        row = totals.setdefault(o["driver_id"], {"driver_id": o["driver_id"], "driver_name": o.get("driver_name"), "amount": 0.0, "orders": 0})
+        row["amount"] += to_float(o.get("total_amount"))
+        row["orders"] += 1
+    return sorted(totals.values(), key=lambda r: -r["amount"])
 
 
 @api.post("/settlements", status_code=201)
 async def create_settlement(body: SettlementIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
+    """Setoran manual bebas (kompatibilitas lama). Untuk setoran driver pakai /settlements/driver."""
     doc = {"id": new_id(), "user_email": user["email"], "user_name": user["name"], "role": user["role"], "amount": body.amount,
            "note": body.note, "status": "pending", "created_at": now_iso()}
     await db.settlements.insert_one(dict(doc))
     return doc
 
 
+@api.post("/settlements/driver", status_code=201)
+async def create_driver_settlement(body: DriverSettlementIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
+    """Setor seluruh uang tunai pengiriman yang belum disetor. Jumlah dihitung SERVER dari order, bukan dari klien."""
+    if user["role"] == DRIVER:
+        driver_id = await linked_driver_id(user)
+        if not driver_id:
+            raise http_error(403, "Akun driver belum dihubungkan ke data driver. Hubungi pemilik.")
+    else:
+        driver_id = (body.driver_id or "").strip()
+        if not driver_id:
+            raise http_error(400, "driver_id wajib diisi")
+    driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
+    if not driver:
+        raise http_error(404, "Data driver tidak ditemukan")
+
+    sid = new_id()
+    claim_query = dict(_CASH_OUTSTANDING_QUERY)
+    claim_query["driver_id"] = driver_id
+    # Klaim atomik: dua permintaan serentak tidak bisa menyetor order yang sama dua kali.
+    claimed = await db.transactions.update_many(claim_query, {"$set": {"settlement_id": sid}})
+    if claimed.modified_count == 0:
+        raise http_error(400, "Tidak ada uang tunai yang perlu disetor")
+    orders = [o async for o in db.transactions.find({"settlement_id": sid}, {"_id": 0, "id": 1, "total_amount": 1})]
+    amount = round(sum(to_float(o.get("total_amount")) for o in orders), 2)
+    doc = {
+        "id": sid, "kind": "driver_cash", "driver_id": driver_id, "driver_name": driver.get("name"),
+        "user_email": user["email"], "user_name": user["name"], "role": user["role"],
+        "amount": amount, "order_ids": [o["id"] for o in orders], "order_count": len(orders),
+        "status": "pending", "note": (body.note or "").strip(), "created_at": now_iso(),
+    }
+    await db.settlements.insert_one(dict(doc))
+    return doc
+
+
 @api.patch("/settlements/{settlement_id}/confirm")
-async def confirm_settlement(settlement_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    res = await db.settlements.update_one({"id": settlement_id}, {"$set": {"status": "confirmed", "confirmed_by": user["email"], "confirmed_at": now_iso()}})
-    if res.matched_count == 0:
+async def confirm_settlement(settlement_id: str, body: Optional[ConfirmIn] = None, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
+    existing = await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+    if not existing:
         raise http_error(404, "Data setoran tidak ditemukan")
-    return clean(await db.settlements.find_one({"id": settlement_id}))
+    if existing.get("status") == "confirmed":
+        return existing  # idempoten
+    amount = to_float(existing.get("amount"))
+    received = body.received_amount if body and body.received_amount is not None else amount
+    changes = {
+        "status": "confirmed", "received_amount": received, "difference": round(received - amount, 2),
+        "confirmed_by": user["email"], "confirmed_by_name": user["name"], "confirmed_at": now_iso(),
+    }
+    if body and body.note:
+        changes["confirm_note"] = body.note.strip()
+    res = await db.settlements.update_one({"id": settlement_id, "status": {"$ne": "confirmed"}}, {"$set": changes})
+    if res.modified_count == 0:
+        return await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+    return await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+
+
+@api.delete("/settlements/{settlement_id}")
+async def delete_settlement(settlement_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+    """Batalkan setoran: order terkait kembali menjadi 'belum disetor'."""
+    existing = await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+    if not existing:
+        raise http_error(404, "Data setoran tidak ditemukan")
+    await db.transactions.update_many({"settlement_id": settlement_id}, {"$unset": {"settlement_id": ""}})
+    await db.settlements.delete_one({"id": settlement_id})
+    return {"success": True}
 
 
 # Semua rute tersedia di /api dan (untuk kompatibilitas lama) tanpa prefix.

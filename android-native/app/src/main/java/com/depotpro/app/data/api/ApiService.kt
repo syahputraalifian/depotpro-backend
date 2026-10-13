@@ -5,13 +5,16 @@ import com.depotpro.app.data.model.AccountCreate
 import com.depotpro.app.data.model.AccountUpdate
 import com.depotpro.app.data.model.AccountUser
 import com.depotpro.app.data.model.AuthResponse
+import com.depotpro.app.data.model.CashOutstanding
 import com.depotpro.app.data.model.ClosingInfo
 import com.depotpro.app.data.model.ClosingRequest
+import com.depotpro.app.data.model.ConfirmSettlementRequest
 import com.depotpro.app.data.model.Customer
 import com.depotpro.app.data.model.DailyReport
 import com.depotpro.app.data.model.DashboardSummary
 import com.depotpro.app.data.model.DataEnvelope
 import com.depotpro.app.data.model.Driver
+import com.depotpro.app.data.model.DriverSettlementRequest
 import com.depotpro.app.data.model.Expense
 import com.depotpro.app.data.model.LoginRequest
 import com.depotpro.app.data.model.Order
@@ -19,6 +22,7 @@ import com.depotpro.app.data.model.PayRequest
 import com.depotpro.app.data.model.ProductInfoBody
 import com.depotpro.app.data.model.Product
 import com.depotpro.app.data.model.Receivable
+import com.depotpro.app.data.model.SettlementItem
 import com.depotpro.app.data.model.SimpleResponse
 import com.depotpro.app.data.model.UpdateStatusRequest
 import com.depotpro.app.data.model.User
@@ -162,4 +166,17 @@ interface ApiService {
 
     @DELETE("users/{id}")
     suspend fun deleteUser(@Path("id") id: String): SimpleResponse
+
+    // ---- Setoran uang driver
+    @GET("settlements")
+    suspend fun getSettlements(): List<SettlementItem>
+
+    @GET("settlements/outstanding")
+    suspend fun getCashOutstanding(): List<CashOutstanding>
+
+    @POST("settlements/driver")
+    suspend fun createDriverSettlement(@Body body: DriverSettlementRequest): SettlementItem
+
+    @PATCH("settlements/{id}/confirm")
+    suspend fun confirmSettlement(@Path("id") id: String, @Body body: ConfirmSettlementRequest): SettlementItem
 }

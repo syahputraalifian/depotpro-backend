@@ -57,6 +57,22 @@ class DriverViewModel(private val depotRepository: DepotRepository) : ViewModel(
         }
     }
 
+    /** Ubah gaji pokok, komisi, uang bensin, dan potongan. Data lain driver dipertahankan. */
+    fun updateSalary(id: String, base: Double, gallonRate: Double, lpgRate: Double, fuel: Double, deductions: Double) {
+        viewModelScope.launch {
+            val existing = depotRepository.currentDrivers().firstOrNull { it.id == id } ?: return@launch
+            depotRepository.updateDriver(
+                existing.copy(
+                    baseSalary = base,
+                    gallonCommissionRate = gallonRate,
+                    lpgCommissionRate = lpgRate,
+                    fuelAllowance = fuel,
+                    deductions = deductions
+                )
+            )
+        }
+    }
+
     fun deleteDriver(driverId: String) {
         viewModelScope.launch { depotRepository.deleteDriver(driverId) }
     }

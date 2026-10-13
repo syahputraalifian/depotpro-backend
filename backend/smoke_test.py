@@ -4,6 +4,7 @@ Pakai:  python3 smoke_test.py [BASE_URL]
 Default BASE_URL: https://depotpro-backend.onrender.com
 Hanya memakai pustaka standar. Semua data uji berawalan 'ZZ TEST' dan dihapus di akhir.
 """
+import getpass
 import json
 import os
 import sys
@@ -15,6 +16,13 @@ BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://depotpro-backend.onrender
 API = BASE + "/api"
 results = []
 cleanup = []  # (method, path)
+
+# Kredensial TIDAK disimpan di berkas. Beri lewat variabel lingkungan atau ketik saat diminta (tersembunyi):
+#   OWNER_EMAIL, OWNER_PASSWORD, KASIR_EMAIL, KASIR_PASSWORD (kasir opsional; tanpa itu uji kasir dilewati)
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL") or "owner@gasgalon.id"
+OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD") or getpass.getpass(f"Password {OWNER_EMAIL}: ")
+KASIR_EMAIL = os.environ.get("KASIR_EMAIL") or "kasir@gasgalon.id"
+KASIR_PASSWORD = os.environ.get("KASIR_PASSWORD")
 
 
 def call(method, path, body=None, token=None):
@@ -56,8 +64,7 @@ def stock_of(tok, pid):
 
 
 def main():
-    owner_pwd = os.environ.get("OWNER_PASSWORD", "sukahar12345")
-    st, body = call("POST", "/auth/login", {"email": "owner@gasgalon.id", "password": owner_pwd})
+    st, body = call("POST", "/auth/login", {"email": OWNER_EMAIL, "password": OWNER_PASSWORD})
     if not check("login owner", st, 200, body):
         print("Login gagal, uji dihentikan."); return
     tok = body["access_token"]
@@ -244,21 +251,62 @@ def main():
             check("driver hanya melihat data driver sendiri", (st, len(drs2) if isinstance(drs2, list) else None), (200, 1), drs2)
             st, b = call("PATCH", f"/orders/{mine}/status", {"status": "on_delivery"}, dt)
             check("driver ubah status order miliknya", st, 200, b)
+            st, b = call("PATCH", f"/orders/{mine}/status", {"status": "delivered", "gallons_returned": 0, "lpg_returned": 0}, dt)
+            check("driver tandai order selesai", st, 200, b)
+            st, out = call("GET", "/settlements/outstanding", token=dt)
+            check("uang belum disetor driver = 5500", (st, out[0]["amount"] if isinstance(out, list) and out else None), (200, 5500.0), out)
+            st, sb = call("POST", "/settlements/driver", {"note": "ZZ TEST"}, dt)
+            check("driver setor uang", (st, sb.get("amount") if isinstance(sb, dict) else None), (201, 5500.0), sb)
+            if st == 201:
+                cleanup.append(("DELETE", f"/settlements/{sb['id']}"))
+                st, out2 = call("GET", "/settlements/outstanding", token=dt)
+                check("setelah setor, belum disetor kosong", (st, out2), (200, []), out2)
+                st, b = call("POST", "/settlements/driver", {}, dt)
+                check("setor ulang ditolak (400)", st, 400, b)
+                st, b = call("PATCH", f"/settlements/{sb['id']}/confirm", {"received_amount": 1.0}, dt)
+                check("driver tidak boleh konfirmasi setoran (403)", st, 403, b)
+                st, b = call("PATCH", f"/settlements/{sb['id']}/confirm", {"received_amount": 5500.0}, tok)
+                check("owner konfirmasi setoran", (st, b.get("status") if isinstance(b, dict) else None), (200, "confirmed"), b)
             st, b = call("PATCH", f"/orders/{other}/status", {"status": "delivered"}, dt)
             check("driver ditolak ubah order orang lain (403)", st, 403, b)
         else:
             check("login akun driver uji", st, 200, lb)
 
+    # ---- wadah kosong bertambah walau kategori produk AMDK (kasus 'Aqua') + edit gaji driver
+    if d2:
+        st, ap = call("POST", "/products", {"name": "ZZ TEST Aqua AMDK", "category": "AMDK", "price": 3000.0,
+                                            "cost_price": 1000.0, "stock": 5, "unit": "pcs"}, tok)
+        if st in (200, 201):
+            aid = ap["id"]; cleanup.append(("DELETE", f"/products/{aid}"))
+            ao = str(uuid.uuid4())
+            call("POST", "/orders", {"id": ao, "customer_name": "ZZ TEST", "items": [{"product_id": aid, "product_name": "x", "quantity": 2, "price": 3000.0}],
+                                     "total_amount": 6000.0, "payment_type": "cash", "status": "assigned", "driver_id": d2, "driver_name": "x"}, tok)
+            cleanup.append(("DELETE", f"/orders/{ao}"))
+            st, b = call("PATCH", f"/orders/{ao}/status", {"status": "delivered", "gallons_returned": 2, "lpg_returned": 0}, tok)
+            check("pengiriman selesai (produk AMDK)", st, 200, b)
+            check("wadah kosong produk AMDK bertambah 2", stock_of(tok, aid).get("empty_gallon_stock"), 2)
+        st, b = call("PUT", f"/drivers/{d2}", {"id": d2, "name": "ZZ TEST Driver Akun", "base_salary": 30000.0, "gallon_commission_rate": 1000.0,
+                                               "lpg_commission_rate": 700.0, "fuel_allowance": 5000.0, "deductions": 2000.0}, tok)
+        check("PUT gaji driver", st, 200, b)
+        st, drs3 = call("GET", "/drivers", token=tok)
+        row = next((x for x in drs3 if x.get("id") == d2), {}) if isinstance(drs3, list) else {}
+        check("gaji tersimpan (30000, potongan 2000)", (row.get("base_salary"), row.get("deductions")), (30000.0, 2000.0), row)
+        calc = (row.get("base_salary", 0) + row.get("total_incentive", 0) + row.get("fuel_allowance", 0) - row.get("deductions", 0))
+        check("take-home pay dihitung ulang", row.get("take_home_pay"), calc, row)
+
     # ---- hak akses
-    st, kb = call("POST", "/auth/login", {"email": "kasir@gasgalon.id", "password": "kasir12345"})
-    if st == 200:
-        kt = kb["access_token"]
-        st, b = call("GET", "/expenses", token=kt)
-        check("kasir dilarang /expenses (403)", st, 403, b)
-        st, b = call("POST", "/products", {"name": "ZZ TEST x", "price": 1.0}, kt)
-        check("kasir dilarang tambah produk (403)", st, 403, b)
+    if KASIR_PASSWORD:
+        st, kb = call("POST", "/auth/login", {"email": KASIR_EMAIL, "password": KASIR_PASSWORD})
+        if st == 200:
+            kt = kb["access_token"]
+            st, b = call("GET", "/expenses", token=kt)
+            check("kasir dilarang /expenses (403)", st, 403, b)
+            st, b = call("POST", "/products", {"name": "ZZ TEST x", "price": 1.0}, kt)
+            check("kasir dilarang tambah produk (403)", st, 403, b)
+        else:
+            check("login kasir", st, 200, kb)
     else:
-        check("login kasir (password demo mungkin sudah diganti)", st, 200, kb)
+        print("SKIP uji hak akses kasir (set KASIR_PASSWORD untuk mengujinya)")
     st, b = call("GET", "/orders")
     check("tanpa token ditolak (401)", st, 401, b)
 
@@ -270,7 +318,7 @@ finally:
     for method, path in reversed(cleanup):
         # login ulang tidak perlu: token disimpan di closure lewat panggilan baru
         pass
-    st, b = call("POST", "/auth/login", {"email": "owner@gasgalon.id", "password": "owner12345"})
+    st, b = call("POST", "/auth/login", {"email": OWNER_EMAIL, "password": OWNER_PASSWORD})
     if st == 200:
         t = b["access_token"]
         for method, path in reversed(cleanup):

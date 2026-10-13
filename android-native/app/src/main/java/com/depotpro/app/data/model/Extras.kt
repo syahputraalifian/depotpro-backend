@@ -43,6 +43,10 @@ data class DailyReport(
     @SerializedName("receivable_payments_total") val receivablePaymentsTotal: Double = 0.0,
     @SerializedName("receivable_payments_cash") val receivablePaymentsCash: Double = 0.0,
     @SerializedName("cash_sales") val cashSales: Double = 0.0,
+    @SerializedName("drawer_cash_sales") val drawerCashSales: Double = 0.0,
+    @SerializedName("delivery_cash_sales") val deliveryCashSales: Double = 0.0,
+    @SerializedName("driver_settlements_received") val driverSettlementsReceived: Double = 0.0,
+    @SerializedName("driver_cash_outstanding") val driverCashOutstanding: Double = 0.0,
     @SerializedName("expected_cash") val expectedCash: Double = 0.0,
     @SerializedName("closing") val closing: ClosingInfo? = null
 )
@@ -78,4 +82,38 @@ data class AccountUpdate(
     @SerializedName("active") val active: Boolean? = null,
     @SerializedName("password") val password: String? = null,
     @SerializedName("driver_id") val driverId: String? = null
+)
+
+// ---------------- Setoran uang driver
+data class CashOutstanding(
+    @SerializedName("driver_id") val driverId: String = "",
+    @SerializedName("driver_name") val driverName: String? = null,
+    @SerializedName("amount") val amount: Double = 0.0,
+    @SerializedName("orders") val orders: Int = 0
+)
+
+data class SettlementItem(
+    @SerializedName("id") val id: String? = null,
+    @SerializedName("driver_id") val driverId: String? = null,
+    @SerializedName("driver_name") val driverName: String? = null,
+    @SerializedName("user_name") val userName: String? = null,
+    @SerializedName("amount") val amount: Double = 0.0,
+    @SerializedName("order_count") val orderCount: Int = 0,
+    @SerializedName("status") val status: String? = null,
+    @SerializedName("note") val note: String? = null,
+    @SerializedName("received_amount") val receivedAmount: Double? = null,
+    @SerializedName("difference") val difference: Double? = null,
+    @SerializedName("created_at") val createdAt: String? = null,
+    @SerializedName("confirmed_at") val confirmedAt: String? = null,
+    @SerializedName("confirmed_by_name") val confirmedByName: String? = null
+)
+
+data class DriverSettlementRequest(
+    @SerializedName("driver_id") val driverId: String? = null,
+    @SerializedName("note") val note: String? = null
+)
+
+data class ConfirmSettlementRequest(
+    @SerializedName("received_amount") val receivedAmount: Double? = null,
+    @SerializedName("note") val note: String? = null
 )
