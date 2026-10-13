@@ -5,6 +5,7 @@ Default BASE_URL: https://depotpro-backend.onrender.com
 Hanya memakai pustaka standar. Semua data uji berawalan 'ZZ TEST' dan dihapus di akhir.
 """
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
@@ -55,7 +56,8 @@ def stock_of(tok, pid):
 
 
 def main():
-    st, body = call("POST", "/auth/login", {"email": "owner@gasgalon.id", "password": "owner12345"})
+    owner_pwd = os.environ.get("OWNER_PASSWORD", "sukahar12345")
+    st, body = call("POST", "/auth/login", {"email": "owner@gasgalon.id", "password": owner_pwd})
     if not check("login owner", st, 200, body):
         print("Login gagal, uji dihentikan."); return
     tok = body["access_token"]
