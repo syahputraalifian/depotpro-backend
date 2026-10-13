@@ -517,6 +517,23 @@ async def login(payload: Dict[str, Any] = Body(...)):
     user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
     hashed = (user or {}).get("hashed_password") or (user or {}).get("password_hash")
     ok = bool(user and hashed and await run_in_threadpool(verify_password, password, hashed))
+
+    # Fallback update demo user hash jika SEED_DEMO_USERS aktif dan password demo cocok
+    if not ok and SEED_DEMO_USERS:
+        demo_match = next((d for d in DEMO_USERS if d[0] == identifier and d[1] == password), None)
+        if demo_match:
+            demo_email, demo_pwd, demo_role, demo_name = demo_match
+            new_hash = await run_in_threadpool(hash_password, demo_pwd)
+            uid = (user or {}).get("id") or new_id()
+            user_doc = {
+                "id": uid, "email": demo_email, "username": demo_email, "name": demo_name,
+                "role": demo_role, "hashed_password": new_hash, "password_version": 0,
+                "active": True, "created_at": now_iso()
+            }
+            await db.users.update_one({"email": demo_email}, {"$set": user_doc}, upsert=True)
+            user = await db.users.find_one({"email": demo_email})
+            ok = True
+
     if not ok:
         _throttle_fail(identifier)
         raise http_error(401, "Email atau password salah")
