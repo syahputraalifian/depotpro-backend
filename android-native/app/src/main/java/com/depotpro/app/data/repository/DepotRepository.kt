@@ -2,8 +2,13 @@ package com.depotpro.app.data.repository
 
 import com.depotpro.app.data.api.ApiService
 import com.depotpro.app.data.api.toUserMessage
+import com.depotpro.app.data.model.AccountCreate
+import com.depotpro.app.data.model.AccountUpdate
+import com.depotpro.app.data.model.AccountUser
 import com.depotpro.app.data.model.AdjustRequest
+import com.depotpro.app.data.model.ClosingRequest
 import com.depotpro.app.data.model.Customer
+import com.depotpro.app.data.model.DailyReport
 import com.depotpro.app.data.model.DashboardSummary
 import com.depotpro.app.data.model.Driver
 import com.depotpro.app.data.model.Expense
@@ -45,6 +50,8 @@ class DepotRepository(private val api: ApiService) {
     private val _expenses = MutableStateFlow<Load<List<Expense>>>(Load.Loading)
     private val _receivables = MutableStateFlow<Load<List<Receivable>>>(Load.Loading)
     private val _summary = MutableStateFlow<Load<DashboardSummary>>(Load.Loading)
+    private val _daily = MutableStateFlow<Load<DailyReport>>(Load.Loading)
+    private val _users = MutableStateFlow<Load<List<AccountUser>>>(Load.Loading)
 
     val productsState: StateFlow<Load<List<Product>>> = _products.asStateFlow()
     val ordersState: StateFlow<Load<List<Order>>> = _orders.asStateFlow()
@@ -53,6 +60,8 @@ class DepotRepository(private val api: ApiService) {
     val expensesState: StateFlow<Load<List<Expense>>> = _expenses.asStateFlow()
     val receivablesState: StateFlow<Load<List<Receivable>>> = _receivables.asStateFlow()
     val summaryState: StateFlow<Load<DashboardSummary>> = _summary.asStateFlow()
+    val dailyState: StateFlow<Load<DailyReport>> = _daily.asStateFlow()
+    val usersState: StateFlow<Load<List<AccountUser>>> = _users.asStateFlow()
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** Pesan untuk ditampilkan ke pengguna (error/sukses). */
@@ -109,6 +118,9 @@ class DepotRepository(private val api: ApiService) {
     suspend fun refreshExpenses(silent: Boolean = false) = load(_expenses, silent) { api.getExpenses() }
     suspend fun refreshReceivables(silent: Boolean = false) = load(_receivables, silent) { api.getReceivables() }
 
+    suspend fun refreshDaily(silent: Boolean = false) = load(_daily, silent) { api.getDailyReport() }
+    suspend fun refreshUsers(silent: Boolean = false) = load(_users, silent) { api.getUsers() }
+
     suspend fun refreshSummary(silent: Boolean = false) {
         if (!canSeeSummary) return
         load(_summary, silent) { api.getDashboardSummary() }
@@ -131,6 +143,7 @@ class DepotRepository(private val api: ApiService) {
                         launch { refreshDrivers(silent) }
                         launch { refreshExpenses(silent) }
                         launch { refreshReceivables(silent) }
+                        launch { refreshUsers(silent) }
                     }
                 }
                 "kasir" -> {
@@ -164,6 +177,8 @@ class DepotRepository(private val api: ApiService) {
         _expenses.value = Load.Loading
         _receivables.value = Load.Loading
         _summary.value = Load.Loading
+        _daily.value = Load.Loading
+        _users.value = Load.Loading
     }
 
     fun currentProducts(): List<Product> = _products.value.dataOrEmpty()
@@ -362,6 +377,39 @@ class DepotRepository(private val api: ApiService) {
         notify("Piutang dihapus")
         refreshReceivables()
         refreshSummary()
+        return true
+    }
+
+    // ----------------------------------------------------- tutup kasir
+    suspend fun saveClosing(countedCash: Double, note: String): Boolean {
+        mutate { api.saveClosing(ClosingRequest(countedCash = countedCash, note = note.ifBlank { null })) } ?: return false
+        notify("Tutup kasir tersimpan")
+        refreshDaily()
+        return true
+    }
+
+    // ------------------------------------------------------ kelola akun
+    suspend fun createUser(email: String, name: String, password: String, role: String, driverId: String?): Boolean {
+        mutate { api.createUser(AccountCreate(email.trim(), name.trim(), password, role, driverId)) } ?: return false
+        notify("Akun dibuat")
+        refreshUsers()
+        refreshDrivers()
+        return true
+    }
+
+    suspend fun updateUser(id: String, update: AccountUpdate): Boolean {
+        mutate { api.updateUser(id, update) } ?: return false
+        notify("Akun diperbarui")
+        refreshUsers()
+        refreshDrivers()
+        return true
+    }
+
+    suspend fun deleteUser(id: String): Boolean {
+        mutate { api.deleteUser(id) } ?: return false
+        notify("Akun dihapus")
+        refreshUsers()
+        refreshDrivers()
         return true
     }
 }

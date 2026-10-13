@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.depotpro.app.ui.MainLayout
 import com.depotpro.app.ui.auth.AuthViewModel
+import com.depotpro.app.ui.closing.ClosingViewModel
 import com.depotpro.app.ui.customer.CustomerViewModel
 import com.depotpro.app.ui.dashboard.DashboardViewModel
 import com.depotpro.app.ui.driver.DriverViewModel
@@ -26,6 +27,7 @@ import com.depotpro.app.ui.pos.PosViewModel
 import com.depotpro.app.ui.receivable.ReceivableViewModel
 import com.depotpro.app.ui.report.ReportViewModel
 import com.depotpro.app.ui.stok.StokViewModel
+import com.depotpro.app.ui.users.UsersViewModel
 import com.depotpro.app.ui.theme.DepotProTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -45,6 +47,8 @@ class MainActivity : ComponentActivity() {
     private val reportViewModel: ReportViewModel by viewModels { factory }
     private val expenseViewModel: ExpenseViewModel by viewModels { factory }
     private val receivableViewModel: ReceivableViewModel by viewModels { factory }
+    private val closingViewModel: ClosingViewModel by viewModels { factory }
+    private val usersViewModel: UsersViewModel by viewModels { factory }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +92,8 @@ class MainActivity : ComponentActivity() {
                             reportViewModel = reportViewModel,
                             expenseViewModel = expenseViewModel,
                             receivableViewModel = receivableViewModel,
+                            closingViewModel = closingViewModel,
+                            usersViewModel = usersViewModel,
                             messages = container.depotRepository.messages,
                             fontScale = fontScale,
                             onFontScaleChange = { scale ->

@@ -5,9 +5,11 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Inventory
+import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.MoneyOff
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -21,4 +23,6 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
     object Report : Screen("laporan", "Laporan", Icons.Default.Assessment)
     object Expense : Screen("pengeluaran", "Pengeluaran", Icons.Default.MoneyOff)
     object Receivable : Screen("piutang", "Piutang", Icons.Default.AccountBalanceWallet)
+    object Closing : Screen("tutup-kasir", "Tutup Kasir", Icons.Default.Receipt)
+    object Users : Screen("akun", "Akun", Icons.Default.ManageAccounts)
 }

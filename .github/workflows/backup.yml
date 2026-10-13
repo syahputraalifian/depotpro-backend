@@ -1,0 +1,42 @@
+name: Cadangan MongoDB harian
+
+on:
+  schedule:
+    - cron: "0 17 * * *"   # 17:00 UTC = 00:00 WIB
+  workflow_dispatch: {}      # bisa dijalankan manual dari tab Actions
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pasang dependensi
+        run: pip install "pymongo>=4.6" dnspython
+
+      - name: Ekspor database
+        env:
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+        run: python scripts/backup_mongo.py backup.json.gz
+
+      - name: Enkripsi (AES-256) sebelum disimpan
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          test -n "$BACKUP_PASSPHRASE" || { echo "Secret BACKUP_PASSPHRASE belum diisi"; exit 1; }
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_PASSPHRASE \
+            -in backup.json.gz -out "backup-$(date -u +%Y%m%d).json.gz.enc"
+          rm backup.json.gz
+
+      - name: Simpan sebagai artifact (30 hari)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mongo-backup-${{ github.run_number }}
+          path: backup-*.json.gz.enc
+          retention-days: 30
+          if-no-files-found: error

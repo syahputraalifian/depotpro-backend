@@ -93,3 +93,8 @@ android-native/.gradle/
 android-native/build/
 android-native/app/build/
 android-native/.kotlin/
+
+# Kunci tanda tangan & rahasia
+keystore.properties
+*.jks
+*.keystore

@@ -61,6 +61,8 @@ import com.depotpro.app.navigation.Screen
 import com.depotpro.app.ui.auth.AuthViewModel
 import com.depotpro.app.ui.auth.LoginScreen
 import com.depotpro.app.ui.auth.Session
+import com.depotpro.app.ui.closing.ClosingScreen
+import com.depotpro.app.ui.closing.ClosingViewModel
 import com.depotpro.app.ui.customer.CustomerScreen
 import com.depotpro.app.ui.customer.CustomerViewModel
 import com.depotpro.app.ui.dashboard.DashboardScreen
@@ -77,6 +79,8 @@ import com.depotpro.app.ui.report.ReportScreen
 import com.depotpro.app.ui.report.ReportViewModel
 import com.depotpro.app.ui.stok.StokScreen
 import com.depotpro.app.ui.stok.StokViewModel
+import com.depotpro.app.ui.users.UsersScreen
+import com.depotpro.app.ui.users.UsersViewModel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlin.math.abs
 
@@ -84,9 +88,10 @@ import kotlin.math.abs
 private fun screensFor(role: String?): List<Screen> = when (role) {
     "owner" -> listOf(
         Screen.Dashboard, Screen.Pos, Screen.Stok, Screen.Driver,
-        Screen.Customer, Screen.Report, Screen.Expense, Screen.Receivable
+        Screen.Customer, Screen.Report, Screen.Expense, Screen.Receivable,
+        Screen.Closing, Screen.Users
     )
-    "kasir" -> listOf(Screen.Pos, Screen.Customer, Screen.Receivable, Screen.Report, Screen.Dashboard)
+    "kasir" -> listOf(Screen.Pos, Screen.Customer, Screen.Receivable, Screen.Closing, Screen.Report, Screen.Dashboard)
     "gudang" -> listOf(Screen.Stok)
     "driver" -> listOf(Screen.Driver)
     else -> emptyList()
@@ -118,6 +123,8 @@ fun MainLayout(
     reportViewModel: ReportViewModel,
     expenseViewModel: ExpenseViewModel,
     receivableViewModel: ReceivableViewModel,
+    closingViewModel: ClosingViewModel,
+    usersViewModel: UsersViewModel,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -140,6 +147,8 @@ fun MainLayout(
             reportViewModel = reportViewModel,
             expenseViewModel = expenseViewModel,
             receivableViewModel = receivableViewModel,
+            closingViewModel = closingViewModel,
+            usersViewModel = usersViewModel,
             messages = messages,
             fontScale = fontScale,
             onFontScaleChange = onFontScaleChange
@@ -159,6 +168,8 @@ private fun AppContent(
     reportViewModel: ReportViewModel,
     expenseViewModel: ExpenseViewModel,
     receivableViewModel: ReceivableViewModel,
+    closingViewModel: ClosingViewModel,
+    usersViewModel: UsersViewModel,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -300,6 +311,8 @@ private fun AppContent(
             composable(Screen.Report.route) { ReportScreen(reportViewModel = reportViewModel, userRole = role) }
             composable(Screen.Expense.route) { ExpenseScreen(expenseViewModel = expenseViewModel) }
             composable(Screen.Receivable.route) { ReceivableScreen(receivableViewModel = receivableViewModel) }
+            composable(Screen.Closing.route) { ClosingScreen(closingViewModel = closingViewModel) }
+            composable(Screen.Users.route) { UsersScreen(usersViewModel = usersViewModel) }
         }
     }
 

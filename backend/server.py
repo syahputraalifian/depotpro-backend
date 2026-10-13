@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import date as ddate, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +39,7 @@ from logic import (  # noqa: E402
     ORDER_STATUSES,
     PRICE_TYPES,
     VALID_ROLES,
+    build_daily_report,
     build_summary,
     driver_take_home,
     normalize_payment,
@@ -213,6 +214,8 @@ def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "role": normalize_role(user.get("role")),
         "base_salary": to_float(user.get("base_salary")),
         "incentive_rate": to_float(user.get("incentive_rate")),
+        "active": user.get("active", True),
+        "driver_id": user.get("driver_id"),
     }
 
 
@@ -392,6 +395,13 @@ class UserIn(_Base):
     password: Optional[str] = None
     role: Optional[str] = None
     active: Optional[bool] = None
+    driver_id: Optional[str] = None  # hubungkan akun driver ke data driver ("" = lepas)
+
+
+class ClosingIn(_Base):
+    date: Optional[str] = None
+    counted_cash: float = Field(..., ge=0)
+    note: Optional[str] = None
 
 
 # ==========================================
@@ -400,6 +410,7 @@ class UserIn(_Base):
 async def _ensure_indexes() -> None:
     specs = [("users", "email", True), ("products", "id", True), ("transactions", "id", True), ("transactions", "created_at", False)]
     specs += [(name, "id", True) for name in ("customers", "drivers", "expenses", "receivables", "settlements")]
+    specs += [("closings", "date", True)]
     for collection, field, unique in specs:
         try:
             if collection == "users":
@@ -480,12 +491,12 @@ app.add_middleware(
 api = APIRouter()
 
 
-@api.get("/")
+@api.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {"status": "ok", "message": "DepotPro ERP Backend Active"}
 
 
-@api.get("/health")
+@api.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     try:
         await client.admin.command("ping")
@@ -549,6 +560,26 @@ async def change_password(payload: Dict[str, Any] = Body(...), user: Dict[str, A
 
 
 # ----------------------------------------------------------- manajemen user
+async def _check_driver_exists(driver_id: Optional[str]) -> None:
+    if driver_id and not await db.drivers.find_one({"id": driver_id}, {"_id": 1}):
+        raise http_error(400, "Data driver yang dipilih tidak ditemukan")
+
+
+async def _link_driver(email: str, driver_id: Optional[str]) -> None:
+    """Satu akun driver <-> satu data driver (dipakai untuk membatasi tugas & data yang terlihat)."""
+    await db.drivers.update_many({"user_email": email}, {"$unset": {"user_email": ""}})
+    if driver_id:
+        await db.drivers.update_one({"id": driver_id}, {"$set": {"user_email": email}})
+
+
+async def linked_driver_id(user: Dict[str, Any]) -> Optional[str]:
+    doc = await db.users.find_one({"$or": [{"email": user["email"]}, {"username": user["email"]}]}, {"driver_id": 1})
+    if doc and doc.get("driver_id"):
+        return doc["driver_id"]
+    d = await db.drivers.find_one({"user_email": user["email"]}, {"id": 1})
+    return d.get("id") if d else None
+
+
 @api.get("/users")
 async def list_users(_: Dict[str, Any] = Depends(require_roles(OWNER))):
     return [public_user(u) | {"active": u.get("active", True)} async for u in db.users.find({}).sort("email", 1)]
@@ -564,13 +595,16 @@ async def create_user(body: UserIn, _: Dict[str, Any] = Depends(require_roles(OW
         raise http_error(400, f"Role harus salah satu dari: {', '.join(sorted(VALID_ROLES))}")
     if len(body.password or "") < 6:
         raise http_error(400, "Password minimal 6 karakter")
+    driver_id = (body.driver_id or None) if role == DRIVER else None
+    await _check_driver_exists(driver_id)
     hashed = await run_in_threadpool(hash_password, body.password or "")
-    doc = {"id": new_id(), "email": email, "username": email, "name": (body.name or email.split("@")[0]).strip(), "role": role,
+    doc = {"id": new_id(), "driver_id": driver_id, "email": email, "username": email, "name": (body.name or email.split("@")[0]).strip(), "role": role,
            "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso()}
     try:
         await db.users.insert_one(dict(doc))
     except DuplicateKeyError:
         raise http_error(409, "Email sudah terdaftar")
+    await _link_driver(email, driver_id)
     return public_user(doc)
 
 
@@ -598,8 +632,21 @@ async def update_user(user_id: str, body: UserIn, me: Dict[str, Any] = Depends(r
             raise http_error(400, "Password minimal 6 karakter")
         changes["hashed_password"] = await run_in_threadpool(hash_password, body.password)
         changes["password_version"] = to_int(doc.get("password_version")) + 1
+    final_role = changes.get("role") or normalize_role(doc.get("role"))
+    relink = False
+    if final_role != DRIVER:
+        if doc.get("driver_id"):
+            changes["driver_id"] = None
+            relink = True
+    elif "driver_id" in body.model_fields_set:
+        wanted = body.driver_id or None
+        await _check_driver_exists(wanted)
+        changes["driver_id"] = wanted
+        relink = True
     if changes:
         await db.users.update_one({"id": user_id}, {"$set": changes})
+    if relink:
+        await _link_driver(str(doc.get("email") or "").lower(), changes.get("driver_id"))
     return public_user({**doc, **changes})
 
 
@@ -860,9 +907,14 @@ async def list_orders(
     status_filter: Optional[str] = Query(None, alias="status"),
     include_cancelled: bool = False,
     limit: int = Query(500, ge=1, le=2000),
-    _: Dict[str, Any] = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     query: Dict[str, Any] = {}
+    if user["role"] == DRIVER:  # driver hanya melihat tugasnya sendiri
+        own = await linked_driver_id(user)
+        if not own:
+            return []
+        query["driver_id"] = own
     if status_filter:
         query["status"] = status_filter
     elif not include_cancelled:
@@ -871,10 +923,12 @@ async def list_orders(
 
 
 @api.get("/orders/{order_id}")
-async def get_order(order_id: str, _: Dict[str, Any] = Depends(get_current_user)):
+async def get_order(order_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     doc = await db.transactions.find_one({"id": order_id}, {"_id": 0})
     if not doc:
         raise http_error(404, "Order tidak ditemukan")
+    if user["role"] == DRIVER and doc.get("driver_id") != await linked_driver_id(user):
+        raise http_error(403, "Order ini bukan tugas Anda")
     return shape_order(doc)
 
 
@@ -901,6 +955,12 @@ async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any
     order = await db.transactions.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise http_error(404, "Order tidak ditemukan")
+    if user["role"] == DRIVER:
+        own = await linked_driver_id(user)
+        if not own:
+            raise http_error(403, "Akun driver belum dihubungkan ke data driver. Hubungi pemilik.")
+        if order.get("driver_id") != own:
+            raise http_error(403, "Order ini bukan tugas Anda")
     if order.get("status") == "cancelled":
         raise http_error(400, "Order sudah dibatalkan")
     if order.get("status") == "delivered" and new_status == "delivered":
@@ -1018,6 +1078,67 @@ async def finance_summary(_: Dict[str, Any] = Depends(require_roles(OWNER))):
             "net_profit": s["net_profit"], "total_transactions": s["total_orders"], "receivables": s["total_receivables"]}
 
 
+# -------------------------------------------------- laporan harian & tutup kasir
+def _parse_day(value: Optional[str]) -> ddate:
+    if not value:
+        return today_wib()
+    try:
+        return ddate.fromisoformat(value.strip())
+    except ValueError:
+        raise http_error(400, "Format tanggal harus YYYY-MM-DD")
+
+
+def _day_range_utc(day: ddate) -> tuple:
+    start = datetime.combine(day, dtime.min, tzinfo=WIB).astimezone(timezone.utc)
+    end = datetime.combine(day + timedelta(days=1), dtime.min, tzinfo=WIB).astimezone(timezone.utc)
+    return start.isoformat(), end.isoformat()
+
+
+async def _daily_report(day: ddate) -> Dict[str, Any]:
+    start, end = _day_range_utc(day)
+    orders = [d async for d in db.transactions.find({"created_at": {"$gte": start, "$lt": end}}, {"_id": 0})]
+    expenses = [d async for d in db.expenses.find({"date": day.isoformat()}, {"_id": 0})]
+    receivables = [d async for d in db.receivables.find({"payments.at": {"$gte": start, "$lt": end}}, {"_id": 0})]
+    return build_daily_report(orders, expenses, receivables, day)
+
+
+@api.get("/reports/daily")
+async def reports_daily(date_str: Optional[str] = Query(None, alias="date"), _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
+    day = _parse_day(date_str)
+    report = await _daily_report(day)
+    report["closing"] = await db.closings.find_one({"date": day.isoformat()}, {"_id": 0})
+    return report
+
+
+@api.post("/closings")
+async def save_closing(body: ClosingIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
+    day = _parse_day(body.date)
+    report = await _daily_report(day)
+    expected = to_float(report["expected_cash"])
+    doc = {
+        "date": day.isoformat(), "expected_cash": expected, "counted_cash": body.counted_cash,
+        "difference": round(body.counted_cash - expected, 2), "orders_count": report["orders_count"],
+        "total_sales": report["total_sales"], "note": (body.note or "").strip(),
+        "closed_by": user["email"], "closed_by_name": user["name"], "closed_at": now_iso(),
+    }
+    await db.closings.update_one({"date": doc["date"]}, {"$set": doc, "$setOnInsert": {"id": new_id()}}, upsert=True)
+    return await db.closings.find_one({"date": doc["date"]}, {"_id": 0})
+
+
+@api.delete("/closings/{day}")
+async def delete_closing(day: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+    d = _parse_day(day)
+    res = await db.closings.delete_one({"date": d.isoformat()})
+    if res.deleted_count == 0:
+        raise http_error(404, "Data tutup kasir tidak ditemukan")
+    return {"success": True}
+
+
+@api.get("/closings")
+async def list_closings(limit: int = Query(60, ge=1, le=366), _: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER))):
+    return [d async for d in db.closings.find({}, {"_id": 0}).sort("date", -1).limit(limit)]
+
+
 # ------------------------------------------------------------ pelanggan
 @api.get("/customers")
 async def list_customers(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
@@ -1108,8 +1229,14 @@ def _driver_changes(body: DriverIn) -> Dict[str, Any]:
 
 
 @api.get("/drivers")
-async def list_drivers(_: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
-    return [shape_driver(d) async for d in db.drivers.find({}, {"_id": 0}).sort("name", 1)]
+async def list_drivers(user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
+    query: Dict[str, Any] = {}
+    if user["role"] == DRIVER:  # jangan bocorkan gaji driver lain
+        own = await linked_driver_id(user)
+        if not own:
+            return []
+        query["id"] = own
+    return [shape_driver(d) async for d in db.drivers.find(query, {"_id": 0}).sort("name", 1)]
 
 
 @api.post("/drivers")

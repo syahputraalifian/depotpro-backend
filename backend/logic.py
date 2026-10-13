@@ -287,3 +287,65 @@ def build_summary(
         "low_stock_count": sum(1 for p in shaped if p["low_stock"]),
         "daily_sales": daily_sales(active, 7, today),
     }
+
+
+def build_daily_report(
+    orders: List[Dict[str, Any]],
+    expenses: List[Dict[str, Any]],
+    receivables: List[Dict[str, Any]],
+    day: date,
+) -> Dict[str, Any]:
+    """Ringkasan satu hari (zona WIB) untuk tutup kasir. Pengeluaran dianggap dibayar tunai dari laci."""
+    todays = [o for o in orders if local_date(o.get("created_at")) == day]
+    active = [o for o in todays if o.get("status") != "cancelled"]
+    cancelled = [o for o in todays if o.get("status") == "cancelled"]
+
+    by_method: Dict[str, Dict[str, Any]] = {}
+    for o in active:
+        m = str(o.get("payment_method") or o.get("payment_type") or "cash").strip().lower()
+        row = by_method.setdefault(m, {"method": m, "count": 0, "amount": 0.0})
+        row["count"] += 1
+        row["amount"] += to_float(o.get("total_amount"))
+
+    items: Dict[str, Dict[str, Any]] = {}
+    for o in active:
+        for it in o.get("items", []) or []:
+            name = str(it.get("product_name") or "?")
+            qty = to_int(it.get("qty", it.get("quantity")))
+            amount = to_float(it.get("subtotal", to_float(it.get("price")) * qty))
+            row = items.setdefault(name, {"product_name": name, "qty": 0, "amount": 0.0})
+            row["qty"] += qty
+            row["amount"] += amount
+
+    day_text = day.isoformat()
+    day_expenses = [e for e in expenses if str(e.get("date") or "")[:10] == day_text]
+    expenses_total = sum(to_float(e.get("amount")) for e in day_expenses)
+
+    rec_total = 0.0
+    rec_cash = 0.0
+    for r in receivables:
+        for p in r.get("payments", []) or []:
+            if local_date(p.get("at")) != day:
+                continue
+            amount = to_float(p.get("amount"))
+            rec_total += amount
+            if str(p.get("method") or "cash").strip().lower() == "cash":
+                rec_cash += amount
+
+    cash_sales = by_method.get("cash", {}).get("amount", 0.0)
+    return {
+        "date": day_text,
+        "orders_count": len(active),
+        "cancelled_count": len(cancelled),
+        "total_sales": sum(to_float(o.get("total_amount")) for o in active),
+        "by_method": sorted(by_method.values(), key=lambda r: -r["amount"]),
+        "items_sold": sorted(items.values(), key=lambda r: (-r["qty"], r["product_name"]))[:30],
+        "expenses_total": expenses_total,
+        "expenses": [
+            {"category": e.get("category"), "amount": to_float(e.get("amount")), "note": e.get("note")} for e in day_expenses
+        ],
+        "receivable_payments_total": rec_total,
+        "receivable_payments_cash": rec_cash,
+        "cash_sales": cash_sales,
+        "expected_cash": cash_sales + rec_cash - expenses_total,
+    }

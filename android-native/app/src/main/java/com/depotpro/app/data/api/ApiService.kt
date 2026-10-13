@@ -1,8 +1,14 @@
 package com.depotpro.app.data.api
 
 import com.depotpro.app.data.model.AdjustRequest
+import com.depotpro.app.data.model.AccountCreate
+import com.depotpro.app.data.model.AccountUpdate
+import com.depotpro.app.data.model.AccountUser
 import com.depotpro.app.data.model.AuthResponse
+import com.depotpro.app.data.model.ClosingInfo
+import com.depotpro.app.data.model.ClosingRequest
 import com.depotpro.app.data.model.Customer
+import com.depotpro.app.data.model.DailyReport
 import com.depotpro.app.data.model.DashboardSummary
 import com.depotpro.app.data.model.DataEnvelope
 import com.depotpro.app.data.model.Driver
@@ -136,4 +142,24 @@ interface ApiService {
     // ---- Laporan
     @GET("reports/summary")
     suspend fun getDashboardSummary(): DashboardSummary
+
+    // ---- Laporan harian & tutup kasir
+    @GET("reports/daily")
+    suspend fun getDailyReport(): DailyReport
+
+    @POST("closings")
+    suspend fun saveClosing(@Body body: ClosingRequest): ClosingInfo
+
+    // ---- Kelola akun (pemilik)
+    @GET("users")
+    suspend fun getUsers(): List<AccountUser>
+
+    @POST("users")
+    suspend fun createUser(@Body body: AccountCreate): AccountUser
+
+    @PUT("users/{id}")
+    suspend fun updateUser(@Path("id") id: String, @Body body: AccountUpdate): AccountUser
+
+    @DELETE("users/{id}")
+    suspend fun deleteUser(@Path("id") id: String): SimpleResponse
 }

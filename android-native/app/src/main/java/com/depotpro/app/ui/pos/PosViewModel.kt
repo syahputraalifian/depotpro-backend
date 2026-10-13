@@ -24,6 +24,14 @@ data class CartItem(
     var quantity: Int
 )
 
+/** Data struk setelah transaksi berhasil disimpan di server. */
+data class ReceiptData(
+    val order: Order,
+    val paymentType: String,
+    val cashPaid: Double?,
+    val change: Double?
+)
+
 sealed class PosState {
     object Loading : PosState()
     data class Success(
@@ -57,8 +65,8 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
     private val _cart = MutableStateFlow<List<CartItem>>(emptyList())
     val cart: StateFlow<List<CartItem>> = _cart.asStateFlow()
 
-    private val _checkoutSuccess = MutableStateFlow(false)
-    val checkoutSuccess: StateFlow<Boolean> = _checkoutSuccess.asStateFlow()
+    private val _receipt = MutableStateFlow<ReceiptData?>(null)
+    val receipt: StateFlow<ReceiptData?> = _receipt.asStateFlow()
 
     // Kunci idempotensi: bila request pertama sukses tetapi respons hilang, mencoba lagi tidak membuat penjualan ganda.
     private var pendingOrderId: String? = null
@@ -99,18 +107,29 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
         pendingOrderId = null
     }
 
-    fun checkout(customerName: String, paymentType: String, selectedDriver: Driver?) {
+    /**
+     * [paymentType]: cash | transfer | qris | tempo | deposit.
+     * [cashPaid] hanya untuk tunai (untuk menghitung kembalian di struk).
+     */
+    fun checkout(
+        customer: Customer?,
+        customerName: String,
+        paymentType: String,
+        selectedDriver: Driver?,
+        cashPaid: Double?
+    ) {
         val cartItems = _cart.value
         if (cartItems.isEmpty() || checkingOut) return
         checkingOut = true
         val orderId = pendingOrderId ?: UUID.randomUUID().toString().also { pendingOrderId = it }
+        val method = paymentType.lowercase()
 
         viewModelScope.launch {
             try {
-                // Harga & total dihitung ulang oleh server; nilai di sini hanya perkiraan tampilan.
+                // Harga & total dihitung ulang oleh server; nilai di sini hanya perkiraan.
                 val order = Order(
                     id = orderId,
-                    customerName = customerName.ifBlank { "Pelanggan Umum" },
+                    customerName = customer?.name ?: customerName.ifBlank { "Pelanggan Umum" },
                     items = cartItems.map {
                         OrderItem(
                             productId = it.product.id,
@@ -120,15 +139,18 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
                         )
                     },
                     totalAmount = cartItems.sumOf { it.product.price * it.quantity },
-                    paymentType = paymentType.lowercase(),
+                    paymentType = method,
                     status = if (selectedDriver != null) "assigned" else "completed",
                     driverId = selectedDriver?.id,
-                    driverName = selectedDriver?.name
+                    driverName = selectedDriver?.name,
+                    customerId = customer?.id
                 )
                 val saved = depotRepository.createOrder(order)
                 if (saved != null) {
+                    val tunai = if (method == "cash") (cashPaid ?: saved.totalAmount) else null
+                    val kembali = tunai?.let { (it - saved.totalAmount).coerceAtLeast(0.0) }
                     clearCart()
-                    _checkoutSuccess.value = true
+                    _receipt.value = ReceiptData(saved, method, tunai, kembali)
                 }
             } finally {
                 checkingOut = false
@@ -136,7 +158,7 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
         }
     }
 
-    fun resetCheckoutState() {
-        _checkoutSuccess.value = false
+    fun dismissReceipt() {
+        _receipt.value = null
     }
 }

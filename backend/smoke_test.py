@@ -206,6 +206,47 @@ def main():
         check("5 pembeli serentak, stok 3: tepat 3 berhasil", ok_n, 3)
         check("stok akhir 0, tidak negatif", stock_of(tok, sid).get("stock"), 0)
 
+    # ---- laporan harian & tutup kasir
+    st, b = call("GET", "/reports/daily", token=tok)
+    check("GET /reports/daily", (st, "expected_cash" in b if isinstance(b, dict) else False), (200, True), b)
+    st, b = call("POST", "/closings", {"date": "2000-01-01", "counted_cash": 1000.0, "note": "ZZ TEST"}, tok)
+    check("POST /closings", st, 200, b)
+    check("selisih tutup kasir dihitung", (b or {}).get("difference") if isinstance(b, dict) else None, 1000.0)
+    cleanup.append(("DELETE", "/closings/2000-01-01"))
+    st, b = call("GET", "/closings", token=tok)
+    check("GET /closings", st, 200, b)
+
+    # ---- akun driver terhubung ke data driver
+    st, b = call("POST", "/drivers", {"name": "ZZ TEST Driver Akun", "phone": "0", "status": "available"}, tok)
+    d2 = (b.get("data") or {}).get("id") if isinstance(b, dict) else None
+    st2, ub = call("POST", "/users", {"email": "zz-test-driver@gasgalon.id", "name": "ZZ TEST Driver", "password": "ZzTest123",
+                                      "role": "driver", "driver_id": d2}, tok)
+    check("POST /users (driver terhubung)", (st2, (ub or {}).get("driver_id") == d2 if isinstance(ub, dict) else False), (201, True), ub)
+    if d2:
+        cleanup.append(("DELETE", f"/drivers/{d2}"))
+    if st2 == 201:
+        cleanup.append(("DELETE", f"/users/{ub['id']}"))
+        st, lb = call("POST", "/auth/login", {"email": "zz-test-driver@gasgalon.id", "password": "ZzTest123"})
+        if st == 200:
+            dt = lb["access_token"]
+            mine = str(uuid.uuid4()); other = str(uuid.uuid4())
+            call("POST", "/orders", {"id": mine, "customer_name": "ZZ TEST", "items": [{"product_id": pid, "product_name": "x", "quantity": 1, "price": 5500.0}],
+                                     "total_amount": 5500.0, "payment_type": "cash", "status": "assigned", "driver_id": d2, "driver_name": "x"}, tok)
+            call("POST", "/orders", {"id": other, "customer_name": "ZZ TEST", "items": [{"product_id": pid, "product_name": "x", "quantity": 1, "price": 5500.0}],
+                                     "total_amount": 5500.0, "payment_type": "cash", "status": "completed"}, tok)
+            cleanup.append(("DELETE", f"/orders/{mine}")); cleanup.append(("DELETE", f"/orders/{other}"))
+            st, lst2 = call("GET", "/orders", token=dt)
+            ids = [o.get("id") for o in lst2] if isinstance(lst2, list) else []
+            check("driver hanya melihat order miliknya", (st, ids), (200, [mine]), lst2)
+            st, drs2 = call("GET", "/drivers", token=dt)
+            check("driver hanya melihat data driver sendiri", (st, len(drs2) if isinstance(drs2, list) else None), (200, 1), drs2)
+            st, b = call("PATCH", f"/orders/{mine}/status", {"status": "on_delivery"}, dt)
+            check("driver ubah status order miliknya", st, 200, b)
+            st, b = call("PATCH", f"/orders/{other}/status", {"status": "delivered"}, dt)
+            check("driver ditolak ubah order orang lain (403)", st, 403, b)
+        else:
+            check("login akun driver uji", st, 200, lb)
+
     # ---- hak akses
     st, kb = call("POST", "/auth/login", {"email": "kasir@gasgalon.id", "password": "kasir12345"})
     if st == 200:

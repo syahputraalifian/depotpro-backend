@@ -143,5 +143,40 @@ class TimeTests(unittest.TestCase):
         self.assertIsNotNone(L.parse_dt("2026-10-10T00:00:00Z"))
 
 
+class DailyReportTests(unittest.TestCase):
+    def test_daily_report(self):
+        day = date(2026, 10, 10)
+        orders = [
+            {"created_at": "2026-10-10T03:00:00+00:00", "total_amount": 30000, "payment_method": "cash",
+             "items": [{"product_name": "Galon", "qty": 2, "subtotal": 30000}]},
+            {"created_at": "2026-10-10T04:00:00+00:00", "total_amount": 20000, "payment_method": "transfer",
+             "items": [{"product_name": "Galon", "qty": 1, "subtotal": 20000}]},
+            {"created_at": "2026-10-10T05:00:00+00:00", "total_amount": 99999, "payment_method": "cash", "status": "cancelled", "items": []},
+            {"created_at": "2026-10-09T03:00:00+00:00", "total_amount": 77777, "payment_method": "cash", "items": []},
+            # 2026-10-09 18:30 UTC = 10 Okt 01:30 WIB -> masuk hari itu
+            {"created_at": "2026-10-09T18:30:00+00:00", "total_amount": 5000, "payment_method": "cash", "items": []},
+        ]
+        expenses = [{"date": "2026-10-10", "category": "Bensin", "amount": 7000}, {"date": "2026-10-09", "category": "X", "amount": 1}]
+        recs = [{"payments": [{"amount": 10000, "method": "cash", "at": "2026-10-10T06:00:00+00:00"},
+                              {"amount": 4000, "method": "transfer", "at": "2026-10-10T06:00:00+00:00"},
+                              {"amount": 999, "method": "cash", "at": "2026-10-08T06:00:00+00:00"}]}]
+        r = L.build_daily_report(orders, expenses, recs, day)
+        self.assertEqual(r["orders_count"], 3)
+        self.assertEqual(r["cancelled_count"], 1)
+        self.assertEqual(r["total_sales"], 55000)
+        self.assertEqual(r["cash_sales"], 35000)
+        self.assertEqual(r["expenses_total"], 7000)
+        self.assertEqual(r["receivable_payments_total"], 14000)
+        self.assertEqual(r["receivable_payments_cash"], 10000)
+        self.assertEqual(r["expected_cash"], 35000 + 10000 - 7000)
+        self.assertEqual(r["by_method"][0]["method"], "cash")
+        self.assertEqual(r["items_sold"][0], {"product_name": "Galon", "qty": 3, "amount": 50000.0})
+
+    def test_empty_day(self):
+        r = L.build_daily_report([], [], [], date(2026, 10, 10))
+        self.assertEqual(r["expected_cash"], 0)
+        self.assertEqual(r["by_method"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
