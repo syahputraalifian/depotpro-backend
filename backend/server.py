@@ -135,28 +135,15 @@ def clean(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
-from passlib.context import CryptContext
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    if not hashed:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8")[:72], hashed.encode("utf-8"))
+    except (ValueError, TypeError):
         return False
-    try:
-        if bcrypt.checkpw(password.encode("utf-8")[:72], hashed.encode("utf-8")):
-            return True
-    except Exception:
-        pass
-    try:
-        if _pwd_context.verify(password, hashed):
-            return True
-    except Exception:
-        pass
-    return False
 
 
 _MONTHS_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
@@ -194,7 +181,7 @@ def http_error(code: int, detail: str) -> HTTPException:
 # AUTH
 # ==========================================
 _login_failures: Dict[str, List[float]] = {}
-MAX_LOGIN_FAILURES = 15
+MAX_LOGIN_FAILURES = 8
 LOGIN_WINDOW_SECONDS = 600
 
 
@@ -435,20 +422,17 @@ async def _ensure_indexes() -> None:
 
 
 async def seed_database() -> None:
-    """Idempotent: memastikan akun demo tersedia dan ter-update."""
+    """Idempotent: hanya menambah data yang belum ada, tidak pernah menimpa password."""
     if SEED_DEMO_USERS:
         for email, password, role, name in DEMO_USERS:
+            if await db.users.find_one({"email": email}, {"_id": 1}):
+                continue
             hashed = await run_in_threadpool(hash_password, password)
-            existing = await db.users.find_one({"email": email})
-            if not existing:
-                await db.users.insert_one({
-                    "id": new_id(), "email": email, "username": email, "name": name, "role": role,
-                    "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
-                })
-                logger.info("User demo dibuat: %s", email)
-            else:
-                await db.users.update_one({"email": email}, {"$set": {"hashed_password": hashed, "role": role, "active": True}})
-                logger.info("User demo diperbarui: %s", email)
+            await db.users.insert_one({
+                "id": new_id(), "email": email, "username": email, "name": name, "role": role,
+                "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
+            })
+            logger.info("User demo dibuat: %s", email)
     if await db.products.count_documents({}) == 0:
         for p in DEFAULT_SEEDED_PRODUCTS:
             await db.products.update_one({"id": p["id"]}, {"$set": {**p, "stock": p["stock_filled"], "total_sold": 0}}, upsert=True)
@@ -530,31 +514,9 @@ async def login(payload: Dict[str, Any] = Body(...)):
         raise http_error(400, "Email dan password wajib diisi")
 
     _throttle_check(identifier)
-    try:
-        user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
-    except Exception as exc:
-        logger.error("Database error during login: %s", exc)
-        raise http_error(503, f"Database tidak dapat dihubungi: {type(exc).__name__}")
-
+    user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
     hashed = (user or {}).get("hashed_password") or (user or {}).get("password_hash")
     ok = bool(user and hashed and await run_in_threadpool(verify_password, password, hashed))
-
-    # Fallback auto-healing demo user hash jika password demo cocok
-    if not ok:
-        demo_match = next((d for d in DEMO_USERS if d[0] == identifier and d[1] == password), None)
-        if demo_match:
-            demo_email, demo_pwd, demo_role, demo_name = demo_match
-            new_hash = await run_in_threadpool(hash_password, demo_pwd)
-            uid = (user or {}).get("id") or new_id()
-            user_doc = {
-                "id": uid, "email": demo_email, "username": demo_email, "name": demo_name,
-                "role": demo_role, "hashed_password": new_hash, "password_version": 0,
-                "active": True, "created_at": now_iso()
-            }
-            await db.users.update_one({"email": demo_email}, {"$set": user_doc}, upsert=True)
-            user = await db.users.find_one({"email": demo_email})
-            ok = True
-
     if not ok:
         _throttle_fail(identifier)
         raise http_error(401, "Email atau password salah")
