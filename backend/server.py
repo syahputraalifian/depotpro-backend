@@ -527,7 +527,12 @@ async def login(payload: Dict[str, Any] = Body(...)):
         raise http_error(400, "Email dan password wajib diisi")
 
     _throttle_check(identifier)
-    user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
+    try:
+        user = await db.users.find_one({"$or": [{"email": identifier}, {"username": identifier}]})
+    except Exception as exc:
+        logger.error("Database error during login: %s", exc)
+        raise http_error(503, f"Database tidak dapat dihubungi: {type(exc).__name__}")
+
     hashed = (user or {}).get("hashed_password") or (user or {}).get("password_hash")
     ok = bool(user and hashed and await run_in_threadpool(verify_password, password, hashed))
 
