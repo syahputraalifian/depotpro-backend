@@ -435,17 +435,20 @@ async def _ensure_indexes() -> None:
 
 
 async def seed_database() -> None:
-    """Idempotent: hanya menambah data yang belum ada, tidak pernah menimpa password."""
+    """Idempotent: memastikan akun demo tersedia dan ter-update."""
     if SEED_DEMO_USERS:
         for email, password, role, name in DEMO_USERS:
-            if await db.users.find_one({"email": email}, {"_id": 1}):
-                continue
             hashed = await run_in_threadpool(hash_password, password)
-            await db.users.insert_one({
-                "id": new_id(), "email": email, "username": email, "name": name, "role": role,
-                "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
-            })
-            logger.info("User demo dibuat: %s", email)
+            existing = await db.users.find_one({"email": email})
+            if not existing:
+                await db.users.insert_one({
+                    "id": new_id(), "email": email, "username": email, "name": name, "role": role,
+                    "hashed_password": hashed, "password_version": 0, "active": True, "created_at": now_iso(),
+                })
+                logger.info("User demo dibuat: %s", email)
+            else:
+                await db.users.update_one({"email": email}, {"$set": {"hashed_password": hashed, "role": role, "active": True}})
+                logger.info("User demo diperbarui: %s", email)
     if await db.products.count_documents({}) == 0:
         for p in DEFAULT_SEEDED_PRODUCTS:
             await db.products.update_one({"id": p["id"]}, {"$set": {**p, "stock": p["stock_filled"], "total_sold": 0}}, upsert=True)
