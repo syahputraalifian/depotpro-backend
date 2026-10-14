@@ -8,6 +8,7 @@ import getpass
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 import uuid
@@ -25,7 +26,7 @@ KASIR_EMAIL = os.environ.get("KASIR_EMAIL") or "kasir@gasgalon.id"
 KASIR_PASSWORD = os.environ.get("KASIR_PASSWORD")
 
 
-def call(method, path, body=None, token=None):
+def _call_once(method, path, body=None, token=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
@@ -43,6 +44,34 @@ def call(method, path, body=None, token=None):
             return e.code, raw
     except Exception as e:  # noqa
         return 0, f"{type(e).__name__}: {e}"
+
+
+def call(method, path, body=None, token=None):
+    """GET diulang sampai 3x bila server sesaat tidak terjangkau (0/502/503/504). Tulis (POST/PUT/DELETE) tidak diulang."""
+    attempts = 3 if method == "GET" else 1
+    for i in range(attempts):
+        status, data = _call_once(method, path, body, token)
+        if status not in (0, 502, 503, 504) or i == attempts - 1:
+            return status, data
+        time.sleep(3)
+
+
+def sweep(tok):
+    """Hapus sisa data uji ('ZZ TEST') dari proses uji yang pernah terhenti, supaya tidak mengotori laporan asli."""
+    st, orders = call("GET", "/orders", token=tok)
+    if st == 200 and isinstance(orders, list):
+        for o in orders:
+            if str(o.get("customer_name", "")).startswith("ZZ TEST") and o.get("id"):
+                s2, _ = call("DELETE", f"/orders/{o['id']}", token=tok)
+                print(f"SWEEP /orders/{o['id']} -> {s2}")
+    for path, field in (("/expenses", "category"), ("/receivables", "customer_name"), ("/customers", "name"),
+                        ("/drivers", "name"), ("/products", "name")):
+        st, rows = call("GET", path, token=tok)
+        if st == 200 and isinstance(rows, list):
+            for r in rows:
+                if str(r.get(field, "")).startswith("ZZ TEST") and r.get("id"):
+                    s2, _ = call("DELETE", f"{path}/{r['id']}", token=tok)
+                    print(f"SWEEP {path}/{r['id']} -> {s2}")
 
 
 def check(name, got, expect, body=None):
@@ -68,6 +97,7 @@ def main():
     if not check("login owner", st, 200, body):
         print("Login gagal, uji dihentikan."); return
     tok = body["access_token"]
+    sweep(tok)
 
     # ---- produk (bentuk JSON seperti Android)
     st, prod = call("POST", "/products", {"name": "ZZ TEST Galon", "category": "Air Isi Ulang", "price": 5000.0,
@@ -331,6 +361,7 @@ finally:
         for method, path in reversed(cleanup):
             s2, _ = call(method, path, token=t)
             print(f"{method} {path} -> {s2}")
+        sweep(t)
     fails = [r for r in results if not r[0]]
     print(f"\nRINGKASAN: {len(results) - len(fails)} lulus, {len(fails)} gagal dari {len(results)} cek")
     for _, name, got, body in fails:
