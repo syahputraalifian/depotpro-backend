@@ -329,6 +329,14 @@ class DepotRepository(private val api: ApiService) {
         return true
     }
 
+    /** Hitung ulang jumlah pengiriman & komisi periode berjalan dari pesanan yang sudah terkirim. */
+    suspend fun recalculateDriver(id: String): Boolean {
+        mutate { api.recalculateDriver(id) } ?: return false
+        notify("Komisi dihitung ulang dari pengiriman")
+        refreshDrivers()
+        return true
+    }
+
     suspend fun payDriver(id: String): Boolean {
         mutate { api.payDriver(id) } ?: return false
         notify("Gaji driver dibayar dan dicatat sebagai pengeluaran")

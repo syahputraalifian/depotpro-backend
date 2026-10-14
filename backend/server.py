@@ -970,6 +970,13 @@ async def _credit_empties(order: Dict[str, Any], gallons: int, lpg: int) -> None
             await db.products.update_one({"id": target}, {"$inc": {"stock_empty": lpg}})
 
 
+def _delivery_counts(items: List[Dict[str, Any]]) -> tuple:
+    """(galon_atau_amdk, lpg) untuk komisi driver. Semua produk selain LPG dihitung sebagai Galon/AMDK."""
+    lpg = sum(to_int(i.get("qty")) for i in items if i.get("kind") == "lpg")
+    other = sum(to_int(i.get("qty")) for i in items if i.get("kind") != "lpg")
+    return other, lpg
+
+
 @api.patch("/orders/{order_id}/status")
 async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any] = Depends(require_roles(OWNER, CASHIER, DRIVER))):
     new_status = body.status.strip().lower()
@@ -1003,8 +1010,7 @@ async def update_order_status(order_id: str, body: StatusIn, user: Dict[str, Any
     if new_status == "delivered":
         await _credit_empties(order, body.gallons_returned, body.lpg_returned)
         if driver_id:
-            galon_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "galon")
-            lpg_qty = sum(to_int(i.get("qty")) for i in order.get("items", []) if i.get("kind") == "lpg")
+            galon_qty, lpg_qty = _delivery_counts(order.get("items", []))
             await db.drivers.update_one(
                 {"id": driver_id},
                 {"$inc": {"completed_deliveries": 1, "gallons_delivered": galon_qty, "lpg_delivered": lpg_qty},
@@ -1328,6 +1334,26 @@ async def pay_driver(driver_id: str, user: Dict[str, Any] = Depends(require_role
         await db.expenses.insert_one({"id": new_id(), "category": "Gaji Driver", "amount": amount, "date": today_wib().isoformat(),
                                       "note": f"Gaji & insentif {shaped.get('name', '')}", "created_by": user["email"], "created_at": now_iso()})
     return {"success": True, "paid": amount}
+
+
+@api.post("/drivers/{driver_id}/recalculate")
+async def recalculate_driver(driver_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+    """Hitung ulang jumlah pengiriman & komisi periode berjalan dari pesanan 'delivered' sejak gaji terakhir dibayar."""
+    driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
+    if not driver:
+        raise http_error(404, "Data driver tidak ditemukan")
+    query: Dict[str, Any] = {"driver_id": driver_id, "status": "delivered"}
+    if driver.get("last_paid_at"):
+        query["status_updated_at"] = {"$gt": driver["last_paid_at"]}
+    completed = gallons = lpg = 0
+    async for o in db.transactions.find(query, {"_id": 0, "items": 1}):
+        g, l = _delivery_counts(o.get("items", []))
+        completed += 1
+        gallons += g
+        lpg += l
+    changes = {"completed_deliveries": completed, "gallons_delivered": gallons, "lpg_delivered": lpg}
+    await db.drivers.update_one({"id": driver_id}, {"$set": changes})
+    return {"success": True, **changes}
 
 
 # ------------------------------------------------------------ pengeluaran

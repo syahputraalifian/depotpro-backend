@@ -322,6 +322,11 @@ def main():
             st, b = call("PATCH", f"/orders/{ao}/status", {"status": "delivered", "gallons_returned": 2, "lpg_returned": 0}, tok)
             check("pengiriman selesai (produk AMDK)", st, 200, b)
             check("wadah kosong produk AMDK bertambah 2", stock_of(tok, aid).get("empty_gallon_stock"), 2)
+            st, drs4 = call("GET", "/drivers", token=tok)
+            r4 = next((x for x in drs4 if x.get("id") == d2), {}) if isinstance(drs4, list) else {}
+            check("komisi: galon/AMDK terantar bertambah (1 + 2)", r4.get("gallons_delivered"), 3, r4)
+            st, b = call("POST", f"/drivers/{d2}/recalculate", None, tok)
+            check("hitung ulang komisi dari pesanan terkirim", (st, (b or {}).get("gallons_delivered") if isinstance(b, dict) else None), (200, 3), b)
         st, b = call("PUT", f"/drivers/{d2}", {"id": d2, "name": "ZZ TEST Driver Akun", "base_salary": 30000.0, "gallon_commission_rate": 1000.0,
                                                "lpg_commission_rate": 700.0, "fuel_allowance": 5000.0, "deductions": 2000.0}, tok)
         check("PUT gaji driver", st, 200, b)

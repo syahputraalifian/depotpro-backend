@@ -264,10 +264,10 @@ def build_summary(
         for item in o.get("items", []):
             kind = item.get("kind")
             qty = to_int(item.get("qty", item.get("quantity")))
-            if kind == "galon":
-                gallons_sold += qty
-            elif kind == "lpg":
+            if kind == "lpg":
                 lpg_sold += qty
+            else:  # galon, AMDK, dan produk lain dihitung sebagai Galon/AMDK
+                gallons_sold += qty
 
     shaped = [shape_product(p) for p in products]
     return {

@@ -101,6 +101,9 @@ interface ApiService {
     @POST("drivers/{id}/pay")
     suspend fun payDriver(@Path("id") id: String): SimpleResponse
 
+    @POST("drivers/{id}/recalculate")
+    suspend fun recalculateDriver(@Path("id") id: String): SimpleResponse
+
     // ---- Pelanggan
     @GET("customers")
     suspend fun getCustomers(): List<Customer>

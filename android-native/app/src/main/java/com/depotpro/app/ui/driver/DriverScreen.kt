@@ -205,6 +205,10 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                                                 onClick = { salaryDriver = driver },
                                                 modifier = Modifier.fillMaxWidth()
                                             ) { Text("Atur Gaji & Komisi") }
+                                            TextButton(
+                                                onClick = { driver.id?.let { driverViewModel.recalculate(it) } },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text("Hitung Ulang Komisi dari Pengiriman") }
                                         }
                                     }
                                 }

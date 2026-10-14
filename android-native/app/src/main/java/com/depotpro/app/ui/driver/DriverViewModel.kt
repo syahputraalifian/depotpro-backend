@@ -73,6 +73,10 @@ class DriverViewModel(private val depotRepository: DepotRepository) : ViewModel(
         }
     }
 
+    fun recalculate(driverId: String) {
+        viewModelScope.launch { depotRepository.recalculateDriver(driverId) }
+    }
+
     fun deleteDriver(driverId: String) {
         viewModelScope.launch { depotRepository.deleteDriver(driverId) }
     }

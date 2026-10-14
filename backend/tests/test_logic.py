@@ -126,6 +126,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(s["daily_sales"][-1]["amount"], 50000)
         self.assertEqual(s["daily_sales"][-1]["date"], "2026-10-10")
 
+    def test_non_lpg_counts_as_gallon_amdk(self):
+        o = {"created_at": "2026-10-10T03:00:00+00:00", "total_amount": 10, "status": "completed", "total_hpp": 5,
+             "items": [{"kind": "other", "qty": 4}, {"kind": "galon", "qty": 1}, {"kind": "lpg", "qty": 2}]}
+        s = L.build_summary([o], [], [], [], date(2026, 10, 10))
+        self.assertEqual(s["gallons_sold"], 5)
+        self.assertEqual(s["lpg_sold"], 2)
+
     def test_net_profit_can_be_negative(self):
         s = L.build_summary([order("2026-10-10T03:00:00+00:00", 100, hpp=50)], [{"category": "x", "amount": 1000}], [], [], date(2026, 10, 10))
         self.assertLess(s["net_profit"], 0)
