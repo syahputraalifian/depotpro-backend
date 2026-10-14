@@ -226,16 +226,23 @@ def main():
     check("GET /closings", st, 200, b)
 
     # ---- akun driver terhubung ke data driver
+    # Bersihkan sisa akun uji dari proses uji yang pernah terhenti, lalu pakai email unik tiap kali jalan.
+    st, ulist = call("GET", "/users", token=tok)
+    if st == 200 and isinstance(ulist, list):
+        for u in ulist:
+            if str(u.get("email", "")).startswith("zz-test-") and u.get("id"):
+                call("DELETE", f"/users/{u['id']}", token=tok)
+    test_email = f"zz-test-driver-{uuid.uuid4().hex[:8]}@gasgalon.id"
     st, b = call("POST", "/drivers", {"name": "ZZ TEST Driver Akun", "phone": "0", "status": "available"}, tok)
     d2 = (b.get("data") or {}).get("id") if isinstance(b, dict) else None
-    st2, ub = call("POST", "/users", {"email": "zz-test-driver@gasgalon.id", "name": "ZZ TEST Driver", "password": "ZzTest123",
+    st2, ub = call("POST", "/users", {"email": test_email, "name": "ZZ TEST Driver", "password": "ZzTest123",
                                       "role": "driver", "driver_id": d2}, tok)
     check("POST /users (driver terhubung)", (st2, (ub or {}).get("driver_id") == d2 if isinstance(ub, dict) else False), (201, True), ub)
     if d2:
         cleanup.append(("DELETE", f"/drivers/{d2}"))
     if st2 == 201:
         cleanup.append(("DELETE", f"/users/{ub['id']}"))
-        st, lb = call("POST", "/auth/login", {"email": "zz-test-driver@gasgalon.id", "password": "ZzTest123"})
+        st, lb = call("POST", "/auth/login", {"email": test_email, "password": "ZzTest123"})
         if st == 200:
             dt = lb["access_token"]
             mine = str(uuid.uuid4()); other = str(uuid.uuid4())
