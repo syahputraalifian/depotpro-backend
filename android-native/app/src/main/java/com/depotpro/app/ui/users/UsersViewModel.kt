@@ -61,6 +61,11 @@ class UsersViewModel(private val depotRepository: DepotRepository) : ViewModel()
         viewModelScope.launch { depotRepository.updateUser(id, AccountUpdate(password = password)) }
     }
 
+    /** Hapus permanen semua riwayat transaksi (harus mengetik konfirmasi). */
+    fun resetTransactions(confirm: String) {
+        viewModelScope.launch { depotRepository.resetTransactions(confirm) }
+    }
+
     fun delete(id: String) {
         viewModelScope.launch { depotRepository.deleteUser(id) }
     }

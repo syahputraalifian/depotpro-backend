@@ -61,6 +61,16 @@ class SetoranViewModel(private val depotRepository: DepotRepository) : ViewModel
         }
     }
 
+    /** Koreksi uang yang diterima / catatan (khusus pemilik). */
+    fun edit(id: String, received: Double, note: String) {
+        viewModelScope.launch { depotRepository.editSettlement(id, received, note.ifBlank { null }) }
+    }
+
+    /** Hapus setoran; pesanan terkait kembali menjadi 'belum disetor' (khusus pemilik). */
+    fun remove(id: String) {
+        viewModelScope.launch { depotRepository.deleteSettlement(id) }
+    }
+
     fun confirm(id: String, received: Double, note: String) {
         viewModelScope.launch { depotRepository.confirmSettlement(id, received, note.ifBlank { null }) }
     }

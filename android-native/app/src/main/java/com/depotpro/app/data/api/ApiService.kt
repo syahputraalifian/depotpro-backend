@@ -19,9 +19,11 @@ import com.depotpro.app.data.model.Expense
 import com.depotpro.app.data.model.LoginRequest
 import com.depotpro.app.data.model.Order
 import com.depotpro.app.data.model.PayRequest
+import com.depotpro.app.data.model.Payroll
 import com.depotpro.app.data.model.ProductInfoBody
 import com.depotpro.app.data.model.Product
 import com.depotpro.app.data.model.Receivable
+import com.depotpro.app.data.model.ResetRequest
 import com.depotpro.app.data.model.SettlementItem
 import com.depotpro.app.data.model.SimpleResponse
 import com.depotpro.app.data.model.UpdateStatusRequest
@@ -182,4 +184,23 @@ interface ApiService {
 
     @PATCH("settlements/{id}/confirm")
     suspend fun confirmSettlement(@Path("id") id: String, @Body body: ConfirmSettlementRequest): SettlementItem
+
+    // ---- Riwayat gaji, koreksi setoran, tutup kasir, reset
+    @GET("payrolls")
+    suspend fun getPayrolls(@Query("driver_id") driverId: String): List<Payroll>
+
+    @DELETE("payrolls/{id}")
+    suspend fun undoPayroll(@Path("id") id: String): SimpleResponse
+
+    @PATCH("settlements/{id}")
+    suspend fun editSettlement(@Path("id") id: String, @Body body: ConfirmSettlementRequest): SettlementItem
+
+    @DELETE("settlements/{id}")
+    suspend fun deleteSettlement(@Path("id") id: String): SimpleResponse
+
+    @DELETE("closings/{day}")
+    suspend fun deleteClosing(@Path("day") day: String): SimpleResponse
+
+    @POST("admin/reset-transactions")
+    suspend fun resetTransactions(@Body body: ResetRequest): SimpleResponse
 }

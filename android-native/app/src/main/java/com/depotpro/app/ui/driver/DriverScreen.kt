@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.depotpro.app.data.model.Driver
+import com.depotpro.app.ui.pos.isTodayWib
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -50,6 +51,7 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
 
     var deliveryFilter by remember { mutableStateOf("belum") }
     var salaryDriver by remember { mutableStateOf<Driver?>(null) }
+    var payrollDriver by remember { mutableStateOf<Driver?>(null) }
 
     fun openAddDialog() {
         editingDriver = null
@@ -65,6 +67,10 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
         phone = d.phone ?: "08198765432"
         status = d.status ?: "available"
         showDialog = true
+    }
+
+    payrollDriver?.let { d ->
+        PayrollDialog(driver = d, driverViewModel = driverViewModel, onDismiss = { payrollDriver = null })
     }
 
     salaryDriver?.let { d ->
@@ -179,15 +185,13 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 if (canManage) {
                                                     Button(
-                                                        onClick = {
-                                                            driver.id?.let { driverViewModel.payDriver(it) }
-                                                            Toast.makeText(context, "Gaji & Komisi Produk ${driver.name} telah dibayarkan!", Toast.LENGTH_SHORT).show()
-                                                        },
+                                                        onClick = { driver.id?.let { driverViewModel.payDriver(it) } },
+                                                        enabled = !isTodayWib(driver.lastPaidAt),
                                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                                     ) {
                                                         Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
                                                         Spacer(modifier = Modifier.width(4.dp))
-                                                        Text("Bayar Kurir", style = MaterialTheme.typography.bodySmall)
+                                                        Text(if (isTodayWib(driver.lastPaidAt)) "Sudah Dibayar" else "Bayar Kurir", style = MaterialTheme.typography.bodySmall)
                                                     }
 
                                                     IconButton(onClick = { openEditDialog(driver) }, modifier = Modifier.size(32.dp)) {
@@ -209,6 +213,10 @@ fun DriverScreen(driverViewModel: DriverViewModel, userRole: String?) {
                                                 onClick = { driver.id?.let { driverViewModel.recalculate(it) } },
                                                 modifier = Modifier.fillMaxWidth()
                                             ) { Text("Hitung Ulang Komisi dari Pengiriman") }
+                                            TextButton(
+                                                onClick = { payrollDriver = driver },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text("Riwayat Gaji (bisa dibatalkan bila salah bayar)") }
                                         }
                                     }
                                 }

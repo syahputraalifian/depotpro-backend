@@ -194,6 +194,12 @@ class DailyReportTests(unittest.TestCase):
         self.assertEqual(r2["driver_settlements_received"], 39000)
         self.assertEqual(r2["expected_cash"], 49000)
 
+    def test_cancelled_receivable_payments_ignored(self):
+        recs = [{"status": "cancelled", "payments": [{"amount": 9999, "method": "cash", "at": "2026-10-10T06:00:00+00:00"}]},
+                {"status": "partial", "payments": [{"amount": 1000, "method": "cash", "at": "2026-10-10T06:00:00+00:00"}]}]
+        r = L.build_daily_report([], [], recs, date(2026, 10, 10))
+        self.assertEqual(r["receivable_payments_cash"], 1000)
+
     def test_empty_day(self):
         r = L.build_daily_report([], [], [], date(2026, 10, 10))
         self.assertEqual(r["expected_cash"], 0)

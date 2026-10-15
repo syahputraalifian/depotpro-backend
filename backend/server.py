@@ -398,6 +398,15 @@ class UserIn(_Base):
     driver_id: Optional[str] = None  # hubungkan akun driver ke data driver ("" = lepas)
 
 
+class ResetIn(_Base):
+    confirm: str = ""
+
+
+class SettlementEditIn(_Base):
+    received_amount: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = None
+
+
 class DriverSettlementIn(_Base):
     driver_id: Optional[str] = None
     note: Optional[str] = None
@@ -420,7 +429,7 @@ class ClosingIn(_Base):
 async def _ensure_indexes() -> None:
     specs = [("users", "email", True), ("products", "id", True), ("transactions", "id", True), ("transactions", "created_at", False)]
     specs += [(name, "id", True) for name in ("customers", "drivers", "expenses", "receivables", "settlements")]
-    specs += [("closings", "date", True)]
+    specs += [("closings", "date", True), ("payrolls", "id", True)]
     for collection, field, unique in specs:
         try:
             if collection == "users":
@@ -1026,6 +1035,8 @@ async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(require_rol
         raise http_error(404, "Data transaksi tidak ditemukan")
     if order.get("status") == "cancelled":
         return {"success": True, "status": "success", "message": "Transaksi sudah dalam status dibatalkan"}
+    if order.get("settlement_id"):
+        raise http_error(409, "Pesanan ini sudah masuk setoran driver. Hapus setoran terkait lebih dulu (menu Setoran), lalu batalkan pesanan.")
 
     claimed = await db.transactions.update_one(
         {"id": order_id, "status": {"$ne": "cancelled"}},
@@ -1045,6 +1056,16 @@ async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(require_rol
     if order.get("payment_method") == "deposit" and order.get("customer_id"):
         await db.customers.update_one({"id": order["customer_id"]}, {"$inc": {"deposit": to_float(order.get("total_amount"))}})
     await db.receivables.update_many({"transaction_id": order_id}, {"$set": {"status": "cancelled"}})
+    if order.get("status") == "delivered" and order.get("driver_id"):
+        # pengiriman yang dibatalkan tidak boleh lagi dihitung sebagai komisi driver
+        g, l = _delivery_counts(order.get("items", []))
+        def _minus(field: str, n: int) -> Dict[str, Any]:
+            return {"$max": [0, {"$subtract": [{"$ifNull": ["$" + field, 0]}, n]}]}
+        await db.drivers.update_one(
+            {"id": order["driver_id"]},
+            [{"$set": {"completed_deliveries": _minus("completed_deliveries", 1),
+                       "gallons_delivered": _minus("gallons_delivered", g), "lpg_delivered": _minus("lpg_delivered", l)}}],
+        )
     return {"success": True, "status": "success", "message": "Transaksi dibatalkan dan stok dikembalikan"}
 
 
@@ -1260,7 +1281,7 @@ def _driver_changes(body: DriverIn) -> Dict[str, Any]:
         if key in data:
             data[key] = str(data[key]).strip()
     for key in ("completed_deliveries", "gallons_delivered", "lpg_delivered", "take_home_pay", "total_incentive",
-                "gallon_incentive", "lpg_incentive"):
+                "gallon_incentive", "lpg_incentive", "last_paid_at", "user_email"):
         data.pop(key, None)  # dihitung/diubah server saja
     return data
 
@@ -1314,26 +1335,73 @@ async def delete_driver(driver_id: str, _: Dict[str, Any] = Depends(require_role
 
 @api.post("/drivers/{driver_id}/pay")
 async def pay_driver(driver_id: str, user: Dict[str, Any] = Depends(require_roles(OWNER))):
-    """Bayar gaji + insentif driver: dicatat sebagai beban 'Gaji Driver' lalu hitungan periode direset."""
+    """Bayar gaji + insentif driver: dicatat sebagai beban 'Gaji Driver' lalu hitungan periode direset.
+
+    Maksimal SATU kali per hari per driver (gaji pokok bersifat harian). Salah bayar bisa dibatalkan lewat /payrolls.
+    """
     driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
     if not driver:
         raise http_error(404, "Data driver tidak ditemukan")
+    if driver.get("last_paid_at") and local_date(driver["last_paid_at"]) == today_wib():
+        raise http_error(409, "Gaji driver ini sudah dibayar hari ini. Jika keliru, batalkan lewat Riwayat Gaji.")
     shaped = shape_driver(driver)
     amount = driver_take_home(shaped)["take_home_pay"]
     # klaim atomik agar tidak terbayar dua kali bila tombol ditekan berulang
     guard: Dict[str, Any] = {"id": driver_id}
     for field in ("completed_deliveries", "gallons_delivered", "lpg_delivered"):
         guard[field] = driver[field] if field in driver else {"$exists": False}
+    paid_at = now_iso()
     claimed = await db.drivers.update_one(
         guard,
-        {"$set": {"completed_deliveries": 0, "gallons_delivered": 0, "lpg_delivered": 0, "deductions": 0.0, "last_paid_at": now_iso()}},
+        {"$set": {"completed_deliveries": 0, "gallons_delivered": 0, "lpg_delivered": 0, "deductions": 0.0, "last_paid_at": paid_at}},
     )
     if claimed.matched_count == 0:
         raise http_error(409, "Data driver baru saja berubah, muat ulang lalu coba lagi")
+    payroll_id = new_id()
+    expense_id = None
     if amount > 0:
-        await db.expenses.insert_one({"id": new_id(), "category": "Gaji Driver", "amount": amount, "date": today_wib().isoformat(),
-                                      "note": f"Gaji & insentif {shaped.get('name', '')}", "created_by": user["email"], "created_at": now_iso()})
-    return {"success": True, "paid": amount}
+        expense_id = new_id()
+        await db.expenses.insert_one({"id": expense_id, "category": "Gaji Driver", "amount": amount, "date": today_wib().isoformat(),
+                                      "note": f"Gaji & insentif {shaped.get('name', '')}", "payroll_id": payroll_id,
+                                      "created_by": user["email"], "created_at": now_iso()})
+    await db.payrolls.insert_one({
+        "id": payroll_id, "driver_id": driver_id, "driver_name": shaped.get("name"), "amount": amount, "paid_at": paid_at,
+        "paid_by": user["email"], "expense_id": expense_id, "prev_last_paid_at": driver.get("last_paid_at"),
+        "completed_deliveries": to_int(shaped.get("completed_deliveries")), "gallons_delivered": to_int(shaped.get("gallons_delivered")),
+        "lpg_delivered": to_int(shaped.get("lpg_delivered")), "deductions": to_float(shaped.get("deductions")),
+    })
+    return {"success": True, "paid": amount, "payroll_id": payroll_id}
+
+
+@api.get("/payrolls")
+async def list_payrolls(driver_id: Optional[str] = Query(None), _: Dict[str, Any] = Depends(require_roles(OWNER))):
+    query: Dict[str, Any] = {"driver_id": driver_id} if driver_id else {}
+    return [d async for d in db.payrolls.find(query, {"_id": 0}).sort("paid_at", -1).limit(100)]
+
+
+@api.delete("/payrolls/{payroll_id}")
+async def undo_payroll(payroll_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
+    """Batalkan pembayaran gaji TERAKHIR seorang driver: pengeluaran dihapus dan hitungan komisi dikembalikan."""
+    pr = await db.payrolls.find_one({"id": payroll_id}, {"_id": 0})
+    if not pr:
+        raise http_error(404, "Catatan gaji tidak ditemukan")
+    newer = await db.payrolls.find_one({"driver_id": pr["driver_id"], "paid_at": {"$gt": pr["paid_at"]}}, {"_id": 1})
+    if newer:
+        raise http_error(409, "Hanya pembayaran gaji terakhir yang bisa dibatalkan")
+    update: Dict[str, Any] = {
+        "$inc": {"completed_deliveries": to_int(pr.get("completed_deliveries")), "gallons_delivered": to_int(pr.get("gallons_delivered")),
+                 "lpg_delivered": to_int(pr.get("lpg_delivered"))},
+        "$set": {"deductions": to_float(pr.get("deductions"))},
+    }
+    if pr.get("prev_last_paid_at"):
+        update["$set"]["last_paid_at"] = pr["prev_last_paid_at"]
+    else:
+        update["$unset"] = {"last_paid_at": ""}
+    await db.drivers.update_one({"id": pr["driver_id"]}, update)
+    if pr.get("expense_id"):
+        await db.expenses.delete_one({"id": pr["expense_id"]})
+    await db.payrolls.delete_one({"id": payroll_id})
+    return {"success": True}
 
 
 @api.post("/drivers/{driver_id}/recalculate")
@@ -1572,6 +1640,24 @@ async def confirm_settlement(settlement_id: str, body: Optional[ConfirmIn] = Non
     return await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
 
 
+@api.patch("/settlements/{settlement_id}")
+async def edit_settlement(settlement_id: str, body: SettlementEditIn, user: Dict[str, Any] = Depends(require_roles(OWNER))):
+    """Koreksi setoran: ubah uang yang diterima (bila sudah dikonfirmasi) dan/atau catatan."""
+    existing = await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+    if not existing:
+        raise http_error(404, "Data setoran tidak ditemukan")
+    changes: Dict[str, Any] = {"edited_by": user["email"], "edited_at": now_iso()}
+    if body.note is not None:
+        changes["note"] = body.note.strip()
+    if body.received_amount is not None:
+        if existing.get("status") != "confirmed":
+            raise http_error(400, "Uang diterima hanya bisa diubah setelah setoran dikonfirmasi")
+        changes["received_amount"] = body.received_amount
+        changes["difference"] = round(body.received_amount - to_float(existing.get("amount")), 2)
+    await db.settlements.update_one({"id": settlement_id}, {"$set": changes})
+    return await db.settlements.find_one({"id": settlement_id}, {"_id": 0})
+
+
 @api.delete("/settlements/{settlement_id}")
 async def delete_settlement(settlement_id: str, _: Dict[str, Any] = Depends(require_roles(OWNER))):
     """Batalkan setoran: order terkait kembali menjadi 'belum disetor'."""
@@ -1581,6 +1667,28 @@ async def delete_settlement(settlement_id: str, _: Dict[str, Any] = Depends(requ
     await db.transactions.update_many({"settlement_id": settlement_id}, {"$unset": {"settlement_id": ""}})
     await db.settlements.delete_one({"id": settlement_id})
     return {"success": True}
+
+
+# ------------------------------------------------------------ reset data uji
+@api.post("/admin/reset-transactions")
+async def reset_transactions(body: ResetIn, user: Dict[str, Any] = Depends(require_roles(OWNER))):
+    """HAPUS PERMANEN seluruh riwayat transaksi untuk memulai dari nol (mis. setelah masa uji).
+
+    Dihapus: transaksi, piutang, pengeluaran, setoran, tutup kasir, catatan gaji, riwayat deposit. Counter driver di-nol-kan.
+    TIDAK diubah: produk & stok (atur lewat menu Stok), pelanggan & saldo deposit, akun, daftar driver.
+    """
+    if body.confirm.strip().upper() != "HAPUS SEMUA":
+        raise http_error(400, 'Ketik "HAPUS SEMUA" untuk mengonfirmasi')
+    deleted: Dict[str, int] = {}
+    for name in ("transactions", "receivables", "expenses", "settlements", "closings", "payrolls", "deposit_ledger"):
+        res = await db[name].delete_many({})
+        deleted[name] = res.deleted_count
+    await db.drivers.update_many(
+        {}, {"$set": {"completed_deliveries": 0, "gallons_delivered": 0, "lpg_delivered": 0, "deductions": 0.0}, "$unset": {"last_paid_at": ""}}
+    )
+    await db.products.update_many({}, {"$set": {"total_sold": 0}})
+    logger.warning("Reset data transaksi oleh %s: %s", user["email"], deleted)
+    return {"success": True, "deleted": deleted}
 
 
 # Semua rute tersedia di /api dan (untuk kompatibilitas lama) tanpa prefix.

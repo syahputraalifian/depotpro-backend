@@ -328,6 +328,8 @@ def build_daily_report(
     rec_total = 0.0
     rec_cash = 0.0
     for r in receivables:
+        if r.get("status") == "cancelled":
+            continue
         for p in r.get("payments", []) or []:
             if local_date(p.get("at")) != day:
                 continue

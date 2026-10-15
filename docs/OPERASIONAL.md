@@ -45,3 +45,14 @@ Akun **Driver** harus dihubungkan ke data driver supaya driver hanya melihat tug
   bisa memakai *Terima Tunai* bila driver menyerahkan uang langsung.
 - **Tutup Kasir:** uang tunai pengiriman baru dihitung masuk laci saat setorannya diterima.
 - **Gaji driver:** menu **Driver** > kartu driver > *Atur Gaji & Komisi* (khusus pemilik).
+
+## 6. Gaji driver, koreksi, dan reset data
+- **Gaji dibayar maksimal sekali per hari per driver.** Salah bayar? Menu Driver > kartu driver > *Riwayat Gaji* > *Batalkan*
+  (hanya pembayaran terakhir): pengeluaran gaji dihapus dan hitungan komisi dikembalikan, lalu bisa dibayar ulang.
+- **Setoran:** pemilik bisa *Ubah* (koreksi uang diterima) atau *Hapus* setoran. Pesanan yang sudah masuk setoran
+  tidak bisa dibatalkan sebelum setorannya dihapus.
+- **Tutup Kasir tidak 0?** Angka laci = penjualan tunai di toko + setoran driver diterima + piutang tunai - pengeluaran.
+  Penjualan yang dibatalkan tidak dihitung, tetapi pengeluaran (termasuk "Gaji Driver"), setoran, dan pembayaran piutang yang
+  masih tercatat tetap dihitung: hapus yang keliru di menu masing-masing. Catatan tutup kasir bisa dihapus (pemilik).
+- **Mulai dari nol setelah masa uji:** menu Akun > *Zona Berbahaya* > *Reset Semua Data Transaksi* (ketik HAPUS SEMUA).
+  Jalankan cadangan manual dulu (GitHub > Actions > Run workflow). Produk, stok, pelanggan, dan akun tidak dihapus.

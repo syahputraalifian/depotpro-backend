@@ -33,6 +33,10 @@ class ClosingViewModel(private val depotRepository: DepotRepository) : ViewModel
         viewModelScope.launch { depotRepository.refreshDaily() }
     }
 
+    fun deleteClosing(date: String) {
+        viewModelScope.launch { depotRepository.deleteClosing(date) }
+    }
+
     fun save(countedCash: Double, note: String) {
         viewModelScope.launch { depotRepository.saveClosing(countedCash, note) }
     }

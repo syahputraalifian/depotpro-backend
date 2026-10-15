@@ -38,6 +38,21 @@ fun formatWib(iso: String?): String {
     }
 }
 
+/** Apakah waktu ISO (UTC) dari server jatuh pada hari ini menurut WIB. */
+fun isTodayWib(iso: String?): Boolean {
+    if (iso.isNullOrBlank() || iso.length < 19) return false
+    return try {
+        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        parser.timeZone = TimeZone.getTimeZone("UTC")
+        val date = parser.parse(iso.substring(0, 19)) ?: return false
+        val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        day.timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+        day.format(date) == day.format(java.util.Date())
+    } catch (e: Exception) {
+        false
+    }
+}
+
 /** Teks struk sederhana (monospace) untuk ditampilkan dan dibagikan lewat WhatsApp/printer. */
 fun buildReceiptText(r: ReceiptData): String {
     val o = r.order

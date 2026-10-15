@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.depotpro.app.data.model.Driver
 import com.depotpro.app.data.model.Order
+import com.depotpro.app.data.model.Payroll
 import com.depotpro.app.data.repository.DepotRepository
 import com.depotpro.app.data.repository.Load
 import com.depotpro.app.data.repository.dataOrEmpty
@@ -70,6 +71,18 @@ class DriverViewModel(private val depotRepository: DepotRepository) : ViewModel(
                     deductions = deductions
                 )
             )
+        }
+    }
+
+    /** Muat riwayat pembayaran gaji seorang driver (hasil dikirim lewat [onResult]). */
+    fun loadPayrolls(driverId: String, onResult: (List<Payroll>) -> Unit) {
+        viewModelScope.launch { onResult(depotRepository.loadPayrolls(driverId) ?: emptyList()) }
+    }
+
+    fun undoPayroll(id: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            depotRepository.undoPayroll(id)
+            onDone()
         }
     }
 

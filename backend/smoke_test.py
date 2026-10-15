@@ -58,14 +58,31 @@ def call(method, path, body=None, token=None):
 
 def sweep(tok):
     """Hapus sisa data uji ('ZZ TEST') dari proses uji yang pernah terhenti, supaya tidak mengotori laporan asli."""
+    st, rows = call("GET", "/settlements", token=tok)
+    if st == 200 and isinstance(rows, list):
+        for r in rows:
+            if str(r.get("driver_name", "")).startswith("ZZ TEST") and r.get("id"):
+                s2, _ = call("DELETE", f"/settlements/{r['id']}", token=tok)
+                print(f"SWEEP /settlements/{r['id']} -> {s2}")
     st, orders = call("GET", "/orders", token=tok)
     if st == 200 and isinstance(orders, list):
         for o in orders:
             if str(o.get("customer_name", "")).startswith("ZZ TEST") and o.get("id"):
                 s2, _ = call("DELETE", f"/orders/{o['id']}", token=tok)
                 print(f"SWEEP /orders/{o['id']} -> {s2}")
-    for path, field in (("/expenses", "category"), ("/receivables", "customer_name"), ("/customers", "name"),
-                        ("/drivers", "name"), ("/products", "name")):
+    st, rows = call("GET", "/payrolls", token=tok)
+    if st == 200 and isinstance(rows, list):
+        for r in rows:  # terbaru lebih dulu: hanya pembayaran terakhir yang boleh dibatalkan
+            if str(r.get("driver_name", "")).startswith("ZZ TEST") and r.get("id"):
+                s2, _ = call("DELETE", f"/payrolls/{r['id']}", token=tok)
+                print(f"SWEEP /payrolls/{r['id']} -> {s2}")
+    st, rows = call("GET", "/expenses", token=tok)
+    if st == 200 and isinstance(rows, list):
+        for r in rows:
+            if (str(r.get("category", "")).startswith("ZZ TEST") or "ZZ TEST" in str(r.get("note", ""))) and r.get("id"):
+                s2, _ = call("DELETE", f"/expenses/{r['id']}", token=tok)
+                print(f"SWEEP /expenses/{r['id']} -> {s2}")
+    for path, field in (("/receivables", "customer_name"), ("/customers", "name"), ("/drivers", "name"), ("/products", "name")):
         st, rows = call("GET", path, token=tok)
         if st == 200 and isinstance(rows, list):
             for r in rows:
@@ -157,6 +174,17 @@ def main():
         check("PUT /drivers/{id}", st, 200, b)
         st, b = call("POST", f"/drivers/{did}/pay", None, tok)
         check("POST /drivers/{id}/pay", st, 200, b)
+        st, b2 = call("POST", f"/drivers/{did}/pay", None, tok)
+        check("gaji tidak bisa dibayar dua kali di hari yang sama (409)", st, 409, b2)
+        st, prs = call("GET", f"/payrolls?driver_id={did}", token=tok)
+        check("riwayat gaji tercatat", (st, len(prs) if isinstance(prs, list) else None), (200, 1), prs)
+        if isinstance(prs, list) and prs:
+            st, b3 = call("DELETE", f"/payrolls/{prs[0]['id']}", token=tok)
+            check("batalkan pembayaran gaji terakhir", st, 200, b3)
+            st, b4 = call("POST", f"/drivers/{did}/pay", None, tok)
+            check("bayar ulang setelah dibatalkan", st, 200, b4)
+            if isinstance(b4, dict) and b4.get("payroll_id"):
+                cleanup.append(("DELETE", f"/payrolls/{b4['payroll_id']}"))
 
     # ---- pelanggan
     st, b = call("POST", "/customers", {"name": "ZZ TEST Pelanggan", "phone": "0899", "address": "Jl. Uji"}, tok)
@@ -304,6 +332,10 @@ def main():
                 check("driver tidak boleh konfirmasi setoran (403)", st, 403, b)
                 st, b = call("PATCH", f"/settlements/{sb['id']}/confirm", {"received_amount": 5500.0}, tok)
                 check("owner konfirmasi setoran", (st, b.get("status") if isinstance(b, dict) else None), (200, "confirmed"), b)
+                st, b = call("PATCH", f"/settlements/{sb['id']}", {"received_amount": 5000.0, "note": "koreksi"}, tok)
+                check("owner koreksi uang setoran (selisih -500)", (st, b.get("difference") if isinstance(b, dict) else None), (200, -500.0), b)
+                st, b = call("DELETE", f"/orders/{mine}", token=tok)
+                check("pesanan yang sudah masuk setoran tidak bisa dibatalkan (409)", st, 409, b)
             st, b = call("PATCH", f"/orders/{other}/status", {"status": "delivered"}, dt)
             check("driver ditolak ubah order orang lain (403)", st, 403, b)
         else:
@@ -335,6 +367,9 @@ def main():
         check("gaji tersimpan (30000, potongan 2000)", (row.get("base_salary"), row.get("deductions")), (30000.0, 2000.0), row)
         calc = (row.get("base_salary", 0) + row.get("total_incentive", 0) + row.get("fuel_allowance", 0) - row.get("deductions", 0))
         check("take-home pay dihitung ulang", row.get("take_home_pay"), calc, row)
+
+    st, b = call("POST", "/admin/reset-transactions", {"confirm": "salah"}, tok)
+    check("reset data tanpa konfirmasi yang benar ditolak (400)", st, 400, b)
 
     # ---- hak akses
     if KASIR_PASSWORD:

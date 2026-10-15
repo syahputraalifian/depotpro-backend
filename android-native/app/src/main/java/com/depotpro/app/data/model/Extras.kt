@@ -117,3 +117,19 @@ data class ConfirmSettlementRequest(
     @SerializedName("received_amount") val receivedAmount: Double? = null,
     @SerializedName("note") val note: String? = null
 )
+
+// ---------------- Riwayat gaji & reset data
+data class Payroll(
+    @SerializedName("id") val id: String? = null,
+    @SerializedName("driver_id") val driverId: String? = null,
+    @SerializedName("driver_name") val driverName: String? = null,
+    @SerializedName("amount") val amount: Double = 0.0,
+    @SerializedName("paid_at") val paidAt: String? = null,
+    @SerializedName("completed_deliveries") val completedDeliveries: Int = 0,
+    @SerializedName("gallons_delivered") val gallonsDelivered: Int = 0,
+    @SerializedName("lpg_delivered") val lpgDelivered: Int = 0
+)
+
+data class ResetRequest(
+    @SerializedName("confirm") val confirm: String
+)

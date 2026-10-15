@@ -18,9 +18,11 @@ import com.depotpro.app.data.model.Driver
 import com.depotpro.app.data.model.Expense
 import com.depotpro.app.data.model.Order
 import com.depotpro.app.data.model.PayRequest
+import com.depotpro.app.data.model.Payroll
 import com.depotpro.app.data.model.Product
 import com.depotpro.app.data.model.ProductInfoBody
 import com.depotpro.app.data.model.Receivable
+import com.depotpro.app.data.model.ResetRequest
 import com.depotpro.app.data.model.UpdateStatusRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -454,6 +456,59 @@ class DepotRepository(private val api: ApiService) {
         refreshSettlements()
         refreshOutstanding()
         refreshSummary()
+        return true
+    }
+
+    // ------------------------------------------- riwayat gaji & koreksi
+    suspend fun loadPayrolls(driverId: String): List<Payroll>? = mutate { api.getPayrolls(driverId) }
+
+    suspend fun undoPayroll(id: String): Boolean {
+        mutate { api.undoPayroll(id) } ?: return false
+        notify("Pembayaran gaji dibatalkan")
+        refreshDrivers()
+        refreshExpenses()
+        refreshSummary()
+        return true
+    }
+
+    suspend fun editSettlement(id: String, receivedAmount: Double?, note: String?): Boolean {
+        mutate { api.editSettlement(id, ConfirmSettlementRequest(receivedAmount, note)) } ?: return false
+        notify("Setoran diperbarui")
+        refreshSettlements()
+        refreshSummary()
+        return true
+    }
+
+    suspend fun deleteSettlement(id: String): Boolean {
+        mutate { api.deleteSettlement(id) } ?: return false
+        notify("Setoran dihapus")
+        refreshSettlements()
+        refreshOutstanding()
+        refreshOrders()
+        refreshSummary()
+        return true
+    }
+
+    suspend fun deleteClosing(day: String): Boolean {
+        mutate { api.deleteClosing(day) } ?: return false
+        notify("Catatan tutup kasir dihapus")
+        refreshDaily()
+        return true
+    }
+
+    /** HAPUS PERMANEN seluruh riwayat transaksi (khusus pemilik). Produk, stok, pelanggan, dan akun tidak dihapus. */
+    suspend fun resetTransactions(confirm: String): Boolean {
+        mutate { api.resetTransactions(ResetRequest(confirm)) } ?: return false
+        notify("Semua riwayat transaksi dihapus")
+        refreshOrders()
+        refreshSummary()
+        refreshExpenses()
+        refreshReceivables()
+        refreshDrivers()
+        refreshSettlements()
+        refreshOutstanding()
+        refreshDaily()
+        refreshProducts()
         return true
     }
 }

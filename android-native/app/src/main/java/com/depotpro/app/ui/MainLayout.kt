@@ -316,7 +316,7 @@ private fun AppContent(
             composable(Screen.Report.route) { ReportScreen(reportViewModel = reportViewModel, userRole = role) }
             composable(Screen.Expense.route) { ExpenseScreen(expenseViewModel = expenseViewModel) }
             composable(Screen.Receivable.route) { ReceivableScreen(receivableViewModel = receivableViewModel) }
-            composable(Screen.Closing.route) { ClosingScreen(closingViewModel = closingViewModel) }
+            composable(Screen.Closing.route) { ClosingScreen(closingViewModel = closingViewModel, userRole = role) }
             composable(Screen.Users.route) { UsersScreen(usersViewModel = usersViewModel) }
             composable(Screen.Setoran.route) { SetoranScreen(setoranViewModel = setoranViewModel, userRole = role) }
         }

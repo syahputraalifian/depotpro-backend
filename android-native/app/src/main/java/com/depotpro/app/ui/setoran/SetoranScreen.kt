@@ -48,6 +48,9 @@ fun SetoranScreen(setoranViewModel: SetoranViewModel, userRole: String?) {
     var showSubmit by remember { mutableStateOf(false) }
     var confirmTarget by remember { mutableStateOf<SettlementItem?>(null) }
     var directTarget by remember { mutableStateOf<CashOutstanding?>(null) }
+    var editTarget by remember { mutableStateOf<SettlementItem?>(null) }
+    var deleteTarget by remember { mutableStateOf<SettlementItem?>(null) }
+    val isOwner = userRole == "owner"
 
     when (val s = state) {
         is SetoranState.Loading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -139,7 +142,14 @@ fun SetoranScreen(setoranViewModel: SetoranViewModel, userRole: String?) {
                                     Text(rupiah(item.amount), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                     if (!item.note.isNullOrBlank()) Text(item.note, style = MaterialTheme.typography.bodySmall)
                                 }
-                                Button(onClick = { confirmTarget = item }) { Text("Terima") }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Button(onClick = { confirmTarget = item }) { Text("Terima") }
+                                    if (isOwner) {
+                                        TextButton(onClick = { deleteTarget = item }) {
+                                            Text("Hapus", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -182,6 +192,14 @@ fun SetoranScreen(setoranViewModel: SetoranViewModel, userRole: String?) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (isOwner) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { editTarget = item }) { Text("Ubah") }
+                                    TextButton(onClick = { deleteTarget = item }) {
+                                        Text("Hapus", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -222,6 +240,35 @@ fun SetoranScreen(setoranViewModel: SetoranViewModel, userRole: String?) {
                     }
                 )
             }
+            editTarget?.let { target ->
+                ReceiveDialog(
+                    title = "Ubah Setoran",
+                    subtitle = "${target.driverName ?: "-"}: setoran ${rupiah(target.amount)}",
+                    expected = target.amount,
+                    initial = target.receivedAmount ?: target.amount,
+                    onDismiss = { editTarget = null },
+                    onConfirm = { received, note ->
+                        editTarget = null
+                        target.id?.let { setoranViewModel.edit(it, received, note) }
+                    }
+                )
+            }
+            deleteTarget?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { deleteTarget = null },
+                    title = { Text("Hapus Setoran?") },
+                    text = {
+                        Text("Setoran ${rupiah(target.amount)} dari ${target.driverName ?: "driver"} akan dihapus. Pesanan terkait kembali menjadi belum disetor.")
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            deleteTarget = null
+                            target.id?.let { setoranViewModel.remove(it) }
+                        }) { Text("Hapus") }
+                    },
+                    dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Batal") } }
+                )
+            }
         }
     }
 }
@@ -254,9 +301,10 @@ private fun ReceiveDialog(
     subtitle: String,
     expected: Double,
     onDismiss: () -> Unit,
-    onConfirm: (Double, String) -> Unit
+    onConfirm: (Double, String) -> Unit,
+    initial: Double = expected
 ) {
-    var receivedStr by remember { mutableStateOf(plain(expected)) }
+    var receivedStr by remember { mutableStateOf(plain(initial)) }
     var note by remember { mutableStateOf("") }
     val received = receivedStr.toDoubleOrNull()
     val diff = if (received != null) received - expected else null

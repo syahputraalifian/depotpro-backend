@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -20,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,7 +40,7 @@ import com.depotpro.app.ui.pos.paymentLabel
 import com.depotpro.app.ui.pos.rupiah
 
 @Composable
-fun ClosingScreen(closingViewModel: ClosingViewModel) {
+fun ClosingScreen(closingViewModel: ClosingViewModel, userRole: String? = null) {
     val state by closingViewModel.state.collectAsState()
 
     // Muat ulang tiap layar dibuka (data harian berubah terus selama ada penjualan).
@@ -59,7 +61,9 @@ fun ClosingScreen(closingViewModel: ClosingViewModel) {
         is ClosingState.Success -> ClosingContent(
             report = s.report,
             onReload = { closingViewModel.load() },
-            onSave = { counted, note -> closingViewModel.save(counted, note) }
+            onSave = { counted, note -> closingViewModel.save(counted, note) },
+            isOwner = userRole == "owner",
+            onDeleteClosing = { closingViewModel.deleteClosing(s.report.date) }
         )
     }
 }
@@ -85,12 +89,19 @@ private fun summaryText(r: DailyReport, counted: Double?): String {
 }
 
 @Composable
-private fun ClosingContent(report: DailyReport, onReload: () -> Unit, onSave: (Double, String) -> Unit) {
+private fun ClosingContent(
+    report: DailyReport,
+    onReload: () -> Unit,
+    onSave: (Double, String) -> Unit,
+    isOwner: Boolean,
+    onDeleteClosing: () -> Unit
+) {
     val context = LocalContext.current
     var countedStr by remember(report.date, report.closing?.countedCash) {
         mutableStateOf(report.closing?.countedCash?.let { plain(it) } ?: "")
     }
     var note by remember(report.date, report.closing?.note) { mutableStateOf(report.closing?.note ?: "") }
+    var showDelete by remember { mutableStateOf(false) }
 
     val counted = countedStr.toDoubleOrNull()
     val difference = if (counted != null) counted - report.expectedCash else null
@@ -151,6 +162,12 @@ private fun ClosingContent(report: DailyReport, onReload: () -> Unit, onSave: (D
             }
         }
 
+        Text(
+            "Pengeluaran, setoran driver, dan pembayaran piutang yang masih tercatat ikut dihitung. Hapus di menu Pengeluaran atau Setoran bila keliru.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         OutlinedTextField(
             value = countedStr,
             onValueChange = { countedStr = it.filter { ch -> ch.isDigit() } },
@@ -189,6 +206,26 @@ private fun ClosingContent(report: DailyReport, onReload: () -> Unit, onSave: (D
                 "Tersimpan oleh ${c.closedByName ?: "-"}. Selisih tercatat: ${rupiah(c.difference)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (isOwner && report.closing != null) {
+            TextButton(onClick = { showDelete = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Hapus Catatan Tutup Kasir Hari Ini", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        if (showDelete) {
+            AlertDialog(
+                onDismissRequest = { showDelete = false },
+                title = { Text("Hapus Catatan Tutup Kasir?") },
+                text = { Text("Catatan hitungan uang laci tanggal ${report.date} dihapus. Data penjualan tidak berubah.") },
+                confirmButton = {
+                    Button(onClick = {
+                        showDelete = false
+                        onDeleteClosing()
+                    }) { Text("Hapus") }
+                },
+                dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Batal") } }
             )
         }
 

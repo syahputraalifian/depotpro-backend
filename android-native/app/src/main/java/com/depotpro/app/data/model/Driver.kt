@@ -14,7 +14,8 @@ data class Driver(
     @SerializedName("gallon_commission_rate") val gallonCommissionRate: Double = 750.0,
     @SerializedName("lpg_commission_rate") val lpgCommissionRate: Double = 500.0,
     @SerializedName("fuel_allowance") val fuelAllowance: Double = 10000.0,
-    @SerializedName("deductions") val deductions: Double = 0.0
+    @SerializedName("deductions") val deductions: Double = 0.0,
+    @SerializedName("last_paid_at") val lastPaidAt: String? = null
 ) {
     val gallonIncentive: Double
         get() = gallonsDelivered * gallonCommissionRate

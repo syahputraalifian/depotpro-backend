@@ -15,7 +15,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,6 +63,7 @@ fun UsersScreen(usersViewModel: UsersViewModel) {
     var editTarget by remember { mutableStateOf<AccountUser?>(null) }
     var resetTarget by remember { mutableStateOf<AccountUser?>(null) }
     var deleteTarget by remember { mutableStateOf<AccountUser?>(null) }
+    var showReset by remember { mutableStateOf(false) }
 
     when (val s = state) {
         is UsersState.Loading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -121,7 +124,35 @@ fun UsersScreen(usersViewModel: UsersViewModel) {
                             }
                         }
                     }
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("Zona Berbahaya", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                Text(
+                                    "Hapus permanen SEMUA riwayat transaksi (penjualan, piutang, pengeluaran, setoran, tutup kasir, gaji) untuk memulai dari nol, misalnya setelah masa uji. Produk, stok, pelanggan, dan akun tidak dihapus. Tidak bisa dibatalkan.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Button(
+                                    onClick = { showReset = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) { Text("Reset Semua Data Transaksi") }
+                            }
+                        }
+                    }
                 }
+            }
+
+            if (showReset) {
+                ResetDialog(
+                    onDismiss = { showReset = false },
+                    onConfirm = { text ->
+                        showReset = false
+                        usersViewModel.resetTransactions(text)
+                    }
+                )
             }
 
             if (showAdd) {
@@ -327,6 +358,36 @@ private fun ResetPasswordDialog(name: String, onDismiss: () -> Unit, onSubmit: (
                     onSubmit(password)
                 }
             }) { Text("Simpan") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
+    )
+}
+
+@Composable
+private fun ResetDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    val ok = text.trim().uppercase() == "HAPUS SEMUA"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reset Semua Data Transaksi?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Seluruh riwayat transaksi akan dihapus PERMANEN. Pastikan cadangan database sudah dibuat. Ketik HAPUS SEMUA untuk melanjutkan.")
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Ketik: HAPUS SEMUA") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(text) },
+                enabled = ok,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text("Hapus Semua") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
     )
