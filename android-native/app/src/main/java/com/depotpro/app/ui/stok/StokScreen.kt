@@ -43,17 +43,21 @@ fun StokScreen(stokViewModel: StokViewModel, userRole: String?) {
     var emptyGallonStock by remember { mutableStateOf("30") }
     var emptyLpgStock by remember { mutableStateOf("0") }
     var unit by remember { mutableStateOf("galon") }
+    var reorderPoint by remember { mutableStateOf("") }
+    var trackEmpty by remember { mutableStateOf(true) }
 
     fun openAddDialog() {
         editingProduct = null
         name = ""
         category = "Air Isi Ulang"
-        price = "5000"
-        costPrice = "1500"
-        stock = "100"
-        emptyGallonStock = "30"
+        price = ""
+        costPrice = ""
+        stock = "0"
+        emptyGallonStock = "0"
         emptyLpgStock = "0"
         unit = "galon"
+        reorderPoint = ""
+        trackEmpty = true
         showDialog = true
     }
 
@@ -62,11 +66,13 @@ fun StokScreen(stokViewModel: StokViewModel, userRole: String?) {
         name = p.name
         category = p.category ?: "Air Isi Ulang"
         price = p.price.toInt().toString()
-        costPrice = ((p.costPrice ?: 1500.0).toInt()).toString()
+        costPrice = ((p.costPrice ?: 0.0).toInt()).toString()
         stock = p.stock.toString()
         emptyGallonStock = p.emptyGallonStock.toString()
         emptyLpgStock = p.emptyLpgStock.toString()
         unit = p.unit ?: "galon"
+        reorderPoint = p.reorderPoint?.takeIf { it > 0 }?.toString() ?: ""
+        trackEmpty = p.trackEmpty != false
         showDialog = true
     }
 
@@ -267,22 +273,41 @@ fun StokScreen(stokViewModel: StokViewModel, userRole: String?) {
                             OutlinedTextField(value = costPrice, onValueChange = { costPrice = it }, label = { Text("HPP / Harga Beli (Rp)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                             OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Harga Jual (Rp)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                             OutlinedTextField(value = unit, onValueChange = { unit = it }, label = { Text("Satuan (galon/tabung/dus/pcs)") })
+                            OutlinedTextField(
+                                value = reorderPoint,
+                                onValueChange = { reorderPoint = it.filter { ch -> ch.isDigit() } },
+                                label = { Text("Batas stok minimum (peringatan, kosong = tanpa)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Hitung wadah kosong saat terjual/dikirim", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Switch(checked = trackEmpty, onCheckedChange = { trackEmpty = it })
+                            }
                         }
                     },
                     confirmButton = {
                         Button(onClick = {
                             if (name.isNotBlank()) {
-                                val cp = costPrice.toDoubleOrNull() ?: 1500.0
-                                val p = price.toDoubleOrNull() ?: 5000.0
-                                val s = stock.toIntOrNull() ?: 100
+                                val cp = costPrice.toDoubleOrNull() ?: 0.0
+                                val p = price.toDoubleOrNull() ?: 0.0
+                                val s = stock.toIntOrNull() ?: 0
                                 val eg = emptyGallonStock.toIntOrNull() ?: 0
                                 val el = emptyLpgStock.toIntOrNull() ?: 0
-                                if (editingProduct == null) {
-                                    stokViewModel.addProduct(name, category, p, cp, s, eg, el, unit)
+                                val rp = reorderPoint.toIntOrNull()
+                                if (p <= 0.0) {
+                                    Toast.makeText(context, "Harga jual wajib diisi", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    editingProduct?.id?.let { stokViewModel.updateProduct(it, name, category, p, cp, s, eg, el, unit, editingProduct) }
+                                    if (editingProduct == null) {
+                                        stokViewModel.addProduct(name, category, p, cp, s, eg, el, unit, rp, trackEmpty)
+                                    } else {
+                                        editingProduct?.id?.let { stokViewModel.updateProduct(it, name, category, p, cp, s, eg, el, unit, editingProduct, rp, trackEmpty) }
+                                    }
+                                    showDialog = false
                                 }
-                                showDialog = false
                             }
                         }) {
                             Text("Simpan Data Produk & Wadah")

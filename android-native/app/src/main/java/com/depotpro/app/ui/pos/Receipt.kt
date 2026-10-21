@@ -53,12 +53,19 @@ fun isTodayWib(iso: String?): Boolean {
     }
 }
 
+/** Waktu sekarang (WIB) untuk struk yang dibuat saat offline. */
+fun nowWibLabel(): String {
+    val out = SimpleDateFormat("dd MMM yyyy HH:mm", Locale("id", "ID"))
+    out.timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+    return out.format(java.util.Date())
+}
+
 /** Teks struk sederhana (monospace) untuk ditampilkan dan dibagikan lewat WhatsApp/printer. */
 fun buildReceiptText(r: ReceiptData): String {
     val o = r.order
     val sb = StringBuilder()
     sb.appendLine("=== $STORE_NAME ===")
-    val time = o.createdAtLabel ?: o.createdAt
+    val time = o.createdAtLabel ?: o.createdAt ?: if (r.queued) nowWibLabel() else null
     if (!time.isNullOrBlank()) sb.appendLine(time)
     o.id?.let { sb.appendLine("No: ${it.take(8).uppercase()}") }
     sb.appendLine("Pelanggan: ${o.customerName ?: "Pelanggan Umum"}")
@@ -76,6 +83,7 @@ fun buildReceiptText(r: ReceiptData): String {
         sb.appendLine("Kembali: ${rupiah(r.change ?: 0.0)}")
     }
     if (r.paymentType.lowercase() == "tempo") sb.appendLine("Status: BELUM LUNAS (piutang)")
+    if (r.queued) sb.appendLine("TERSIMPAN OFFLINE: akan dikirim otomatis saat internet kembali (total perkiraan)")
     sb.appendLine()
     sb.append("Terima kasih!")
     return sb.toString()

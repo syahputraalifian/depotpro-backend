@@ -194,6 +194,21 @@ def main():
         cleanup.append(("DELETE", f"/customers/{cid}"))
         st, b = call("PUT", f"/customers/{cid}", {"id": cid, "name": "ZZ TEST Pelanggan 2", "phone": "0899", "address": "Jl. Uji 2"}, tok)
         check("PUT /customers/{id}", st, 200, b)
+        st, b = call("POST", f"/customers/{cid}/deposit", {"amount": 50000.0, "reason": "ZZ TEST"}, tok)
+        check("isi saldo deposit pelanggan", (st, b.get("deposit") if isinstance(b, dict) else None), (200, 50000.0), b)
+        dep_order = str(uuid.uuid4())
+        st, b = call("POST", "/orders", {"id": dep_order, "customer_id": cid, "customer_name": "ZZ TEST Pelanggan",
+                                         "items": [{"product_id": pid, "product_name": "x", "quantity": 1, "price": 5500.0}],
+                                         "total_amount": 5500.0, "payment_type": "deposit", "status": "completed"}, tok)
+        check("bayar dengan saldo deposit", st, 200, b)
+        cleanup.append(("DELETE", f"/orders/{dep_order}"))
+        st, cl = call("GET", "/customers", token=tok)
+        crow = next((x for x in cl if x.get("id") == cid), {}) if isinstance(cl, list) else {}
+        check("saldo deposit berkurang (50000 - 5500)", crow.get("deposit"), 44500.0, crow)
+        st, b = call("DELETE", f"/orders/{dep_order}", token=tok)
+        st, cl = call("GET", "/customers", token=tok)
+        crow = next((x for x in cl if x.get("id") == cid), {}) if isinstance(cl, list) else {}
+        check("saldo deposit kembali saat dibatalkan (50000)", crow.get("deposit"), 50000.0, crow)
     st, b = call("GET", "/customers", token=tok)
     check("GET /customers", st, 200, b)
 
@@ -370,6 +385,19 @@ def main():
 
     st, b = call("POST", "/admin/reset-transactions", {"confirm": "salah"}, tok)
     check("reset data tanpa konfirmasi yang benar ditolak (400)", st, 400, b)
+
+    # ---- produk tanpa wadah kosong (track_empty=false) + batas stok minimum
+    st, tp = call("POST", "/products", {"name": "ZZ TEST Dus", "category": "AMDK", "price": 2000.0, "cost_price": 1000.0,
+                                        "stock": 5, "unit": "dus", "track_empty": False, "reorder_point": 3}, tok)
+    if st in (200, 201):
+        tid = tp["id"]; cleanup.append(("DELETE", f"/products/{tid}"))
+        check("produk menyimpan track_empty=false dan batas minimum", (tp.get("track_empty"), tp.get("reorder_point")), (False, 3), tp)
+        to = str(uuid.uuid4())
+        call("POST", "/orders", {"id": to, "customer_name": "ZZ TEST", "items": [{"product_id": tid, "product_name": "x", "quantity": 2, "price": 2000.0}],
+                                 "total_amount": 4000.0, "payment_type": "cash", "status": "completed"}, tok)
+        cleanup.append(("DELETE", f"/orders/{to}"))
+        check("wadah kosong tidak bertambah untuk produk track_empty=false", stock_of(tok, tid).get("empty_gallon_stock"), 0)
+        check("stok menipis terdeteksi (3 <= 3)", stock_of(tok, tid).get("low_stock"), True)
 
     # ---- hak akses
     if KASIR_PASSWORD:

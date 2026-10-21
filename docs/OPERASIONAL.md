@@ -56,3 +56,13 @@ Akun **Driver** harus dihubungkan ke data driver supaya driver hanya melihat tug
   masih tercatat tetap dihitung: hapus yang keliru di menu masing-masing. Catatan tutup kasir bisa dihapus (pemilik).
 - **Mulai dari nol setelah masa uji:** menu Akun > *Zona Berbahaya* > *Reset Semua Data Transaksi* (ketik HAPUS SEMUA).
   Jalankan cadangan manual dulu (GitHub > Actions > Run workflow). Produk, stok, pelanggan, dan akun tidak dihapus.
+
+## 7. Saldo deposit, mode offline, stok menipis
+- **Saldo deposit:** menu Pelanggan > kartu pelanggan > *Isi Saldo* (pemilik juga bisa *Kurangi*). Dipakai di Kasir lewat metode *Saldo Deposit*.
+- **Mode offline:** bila internet putus saat checkout, transaksi disimpan di HP dan dikirim otomatis saat internet kembali
+  (spanduk "N transaksi menunggu internet" di Kasir). Stok belum berkurang sampai terkirim, jadi hindari menjual stok terakhir
+  saat offline. Bila server menolak (mis. stok habis), muncul "N transaksi offline ditolak server" > *Lihat* > *Coba Lagi* / *Buang*.
+- **Stok menipis:** isi *Batas stok minimum* di form produk (menu Stok). Produk di batas itu muncul di spanduk merah
+  dan sebagai notifikasi (pemilik & gudang) selama aplikasi berjalan. Aplikasi akan meminta izin notifikasi (Android 13+).
+- **Wadah kosong per produk:** matikan sakelar *Hitung wadah kosong saat terjual/dikirim* untuk produk tanpa wadah kembali
+  (mis. AMDK dus).

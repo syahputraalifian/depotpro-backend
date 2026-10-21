@@ -11,6 +11,7 @@ import com.depotpro.app.data.model.ClosingRequest
 import com.depotpro.app.data.model.ConfirmSettlementRequest
 import com.depotpro.app.data.model.Customer
 import com.depotpro.app.data.model.DailyReport
+import com.depotpro.app.data.model.DepositRequest
 import com.depotpro.app.data.model.DashboardSummary
 import com.depotpro.app.data.model.DataEnvelope
 import com.depotpro.app.data.model.Driver
@@ -203,4 +204,8 @@ interface ApiService {
 
     @POST("admin/reset-transactions")
     suspend fun resetTransactions(@Body body: ResetRequest): SimpleResponse
+
+    // ---- Saldo deposit pelanggan
+    @POST("customers/{id}/deposit")
+    suspend fun adjustDeposit(@Path("id") id: String, @Body body: DepositRequest): Customer
 }

@@ -42,6 +42,7 @@ from logic import (  # noqa: E402
     build_daily_report,
     build_summary,
     driver_take_home,
+    local_date,
     normalize_payment,
     normalize_role,
     now_iso,

@@ -14,7 +14,9 @@ data class ProductInfoBody(
     @SerializedName("category") val category: String? = null,
     @SerializedName("price") val price: Double,
     @SerializedName("cost_price") val costPrice: Double? = null,
-    @SerializedName("unit") val unit: String? = null
+    @SerializedName("unit") val unit: String? = null,
+    @SerializedName("reorder_point") val reorderPoint: Int? = null,
+    @SerializedName("track_empty") val trackEmpty: Boolean? = null
 )
 
 data class AdjustRequest(

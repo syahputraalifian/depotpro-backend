@@ -14,7 +14,9 @@ data class Product(
     @SerializedName("unit") val unit: String? = "pcs",
     // Null = tidak dikirim ke server, sehingga nilai di server tidak tertimpa saat edit.
     @SerializedName("reorder_point") val reorderPoint: Int? = null,
-    @SerializedName("total_sold") val totalSold: Int? = null
+    @SerializedName("total_sold") val totalSold: Int? = null,
+    // false = produk ini tidak menambah stok wadah kosong saat terjual (mis. AMDK dus). Null = tidak diubah.
+    @SerializedName("track_empty") val trackEmpty: Boolean? = null
 ) {
     val marginPercentage: Double
         get() = if (price > 0 && (costPrice ?: 0.0) > 0) {

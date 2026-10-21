@@ -131,6 +131,7 @@ def shape_product(doc: Dict[str, Any]) -> Dict[str, Any]:
     p["empty_lpg_stock"] = empty if kind == "lpg" else 0
     p["empty_gallon_stock"] = empty if kind != "lpg" else 0
     p["low_stock"] = filled <= p["reorder_point"]
+    p["track_empty"] = doc.get("track_empty") is not False  # False = produk ini tidak menambah wadah kosong
     return p
 
 

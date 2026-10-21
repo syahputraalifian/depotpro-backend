@@ -29,7 +29,8 @@ data class ReceiptData(
     val order: Order,
     val paymentType: String,
     val cashPaid: Double?,
-    val change: Double?
+    val change: Double?,
+    val queued: Boolean = false
 )
 
 sealed class PosState {
@@ -67,6 +68,10 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
 
     private val _receipt = MutableStateFlow<ReceiptData?>(null)
     val receipt: StateFlow<ReceiptData?> = _receipt.asStateFlow()
+
+    /** Transaksi offline yang menunggu internet, dan yang ditolak server (perlu keputusan kasir). */
+    val pendingCount: StateFlow<Int> = depotRepository.pendingCount
+    val failedOrders = depotRepository.failedOrders
 
     // Kunci idempotensi: bila request pertama sukses tetapi respons hilang, mencoba lagi tidak membuat penjualan ganda.
     private var pendingOrderId: String? = null
@@ -145,17 +150,26 @@ class PosViewModel(private val depotRepository: DepotRepository) : ViewModel() {
                     driverName = selectedDriver?.name,
                     customerId = customer?.id
                 )
-                val saved = depotRepository.createOrder(order)
-                if (saved != null) {
+                val result = depotRepository.createOrder(order)
+                if (result != null) {
+                    val saved = result.order
                     val tunai = if (method == "cash") (cashPaid ?: saved.totalAmount) else null
                     val kembali = tunai?.let { (it - saved.totalAmount).coerceAtLeast(0.0) }
                     clearCart()
-                    _receipt.value = ReceiptData(saved, method, tunai, kembali)
+                    _receipt.value = ReceiptData(saved, method, tunai, kembali, result.queued)
                 }
             } finally {
                 checkingOut = false
             }
         }
+    }
+
+    fun retryFailed(id: String) {
+        viewModelScope.launch { depotRepository.retryFailedOrder(id) }
+    }
+
+    fun discardFailed(id: String) {
+        depotRepository.discardFailedOrder(id)
     }
 
     fun dismissReceipt() {

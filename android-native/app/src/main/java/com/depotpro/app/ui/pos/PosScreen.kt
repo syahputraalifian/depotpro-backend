@@ -74,6 +74,9 @@ fun PosScreen(posViewModel: PosViewModel) {
 
     var query by remember { mutableStateOf("") }
     var showCheckout by remember { mutableStateOf(false) }
+    var showFailed by remember { mutableStateOf(false) }
+    val pending by posViewModel.pendingCount.collectAsState()
+    val failed by posViewModel.failedOrders.collectAsState()
 
     val total = cart.sumOf { it.product.price * it.quantity }
     val itemCount = cart.sumOf { it.quantity }
@@ -109,6 +112,38 @@ fun PosScreen(posViewModel: PosViewModel) {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (pending > 0) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Text(
+                        "$pending transaksi tersimpan di HP, menunggu internet. Akan dikirim otomatis.",
+                        modifier = Modifier.padding(10.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            if (failed.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${failed.size} transaksi offline ditolak server",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = { showFailed = true }) { Text("Lihat") }
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -202,6 +237,43 @@ fun PosScreen(posViewModel: PosViewModel) {
                 }
             }
         }
+    }
+
+    if (showFailed) {
+        AlertDialog(
+            onDismissRequest = { showFailed = false },
+            title = { Text("Transaksi Ditolak Server") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (failed.isEmpty()) Text("Tidak ada.")
+                    failed.forEach { f ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    "${f.order.customerName ?: "Pelanggan Umum"} - ${rupiah(f.order.totalAmount)}",
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    f.order.items.joinToString { "${it.productName} x${it.quantity}" },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(f.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { f.order.id?.let { posViewModel.retryFailed(it) } }) { Text("Coba Lagi") }
+                                    TextButton(onClick = { f.order.id?.let { posViewModel.discardFailed(it) } }) {
+                                        Text("Buang", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showFailed = false }) { Text("Tutup") } }
+        )
     }
 
     receipt?.let { r ->

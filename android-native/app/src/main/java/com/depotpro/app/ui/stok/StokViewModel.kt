@@ -48,7 +48,9 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
         stock: Int,
         emptyGallonStock: Int,
         emptyLpgStock: Int,
-        unit: String
+        unit: String,
+        reorderPoint: Int? = null,
+        trackEmpty: Boolean? = null
     ) {
         viewModelScope.launch {
             depotRepository.createProduct(
@@ -60,7 +62,9 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
                     stock = stock,
                     emptyGallonStock = emptyGallonStock,
                     emptyLpgStock = emptyLpgStock,
-                    unit = unit
+                    unit = unit,
+                    reorderPoint = reorderPoint,
+                    trackEmpty = trackEmpty
                 )
             )
         }
@@ -76,7 +80,9 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
         emptyGallonStock: Int,
         emptyLpgStock: Int,
         unit: String,
-        original: Product? = null
+        original: Product? = null,
+        reorderPoint: Int? = null,
+        trackEmpty: Boolean? = null
     ) {
         viewModelScope.launch {
             depotRepository.updateProduct(
@@ -89,7 +95,9 @@ class StokViewModel(private val depotRepository: DepotRepository) : ViewModel() 
                     stock = stock,
                     emptyGallonStock = emptyGallonStock,
                     emptyLpgStock = emptyLpgStock,
-                    unit = unit
+                    unit = unit,
+                    reorderPoint = reorderPoint,
+                    trackEmpty = trackEmpty
                 ),
                 original
             )

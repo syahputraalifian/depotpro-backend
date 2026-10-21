@@ -1,8 +1,13 @@
 package com.depotpro.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.depotpro.app.notification.LowStockNotifier
 import com.depotpro.app.ui.MainLayout
 import com.depotpro.app.ui.auth.AuthViewModel
 import com.depotpro.app.ui.closing.ClosingViewModel
@@ -52,8 +58,19 @@ class MainActivity : ComponentActivity() {
     private val usersViewModel: UsersViewModel by viewModels { factory }
     private val setoranViewModel: SetoranViewModel by viewModels { factory }
 
+    // Produk yang sudah diberi tahu lewat notifikasi (agar tidak berulang tiap 15 detik).
+    private val notifiedLow = mutableSetOf<String>()
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        LowStockNotifier.ensureChannel(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Sinkronisasi berkala hanya saat aplikasi terlihat & pengguna sudah login (tanpa polling di background).
         lifecycleScope.launch {
@@ -65,6 +82,7 @@ class MainActivity : ComponentActivity() {
                             // Penuh (semua data) tiap 4 putaran = 60 detik; sisanya hanya stok/transaksi/ringkasan.
                             container.depotRepository.refreshAll(role, silent = tick > 0, light = tick % 4 != 0)
                             tick++
+                            if (role == "owner" || role == "gudang") notifyLowStockIfNeeded()
                             delay(15_000)
                         }
                     }
@@ -74,6 +92,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val fontScale by container.tokenManager.fontScaleFlow.collectAsState(initial = 1.0f)
+            val lowStock by container.depotRepository.lowStockProducts.collectAsState(initial = emptyList())
             val baseDensity = LocalDensity.current
             // Skala huruf pilihan pengguna dikalikan skala sistem, berlaku untuk seluruh aplikasi.
             CompositionLocalProvider(
@@ -97,6 +116,7 @@ class MainActivity : ComponentActivity() {
                             closingViewModel = closingViewModel,
                             usersViewModel = usersViewModel,
                             setoranViewModel = setoranViewModel,
+                            lowStockNames = lowStock.map { it.name },
                             messages = container.depotRepository.messages,
                             fontScale = fontScale,
                             onFontScaleChange = { scale ->
@@ -106,6 +126,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /** Beri notifikasi untuk produk yang BARU masuk daftar stok menipis; reset bila stok sudah pulih. */
+    private fun notifyLowStockIfNeeded() {
+        val low = container.depotRepository.currentProducts()
+            .filter { (it.reorderPoint ?: 0) > 0 && it.stock <= (it.reorderPoint ?: 0) }
+            .map { it.name }
+        notifiedLow.retainAll(low.toSet())
+        val fresh = low.filter { it !in notifiedLow }
+        if (fresh.isNotEmpty()) {
+            LowStockNotifier.notifyLowStock(this, fresh)
+            notifiedLow.addAll(fresh)
         }
     }
 }

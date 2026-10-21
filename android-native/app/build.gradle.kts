@@ -22,8 +22,8 @@ android {
         applicationId = "com.depotpro.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Ganti alamat server: ./gradlew assembleDebug -PapiBaseUrl=http://10.0.2.2:8000/api/

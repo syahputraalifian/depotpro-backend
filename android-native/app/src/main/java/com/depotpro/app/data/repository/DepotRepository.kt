@@ -6,6 +6,8 @@ import com.depotpro.app.data.model.AccountCreate
 import com.depotpro.app.data.model.AccountUpdate
 import com.depotpro.app.data.model.AccountUser
 import com.depotpro.app.data.model.AdjustRequest
+import com.depotpro.app.data.model.DepositRequest
+import com.depotpro.app.data.model.FailedOrder
 import com.depotpro.app.data.model.CashOutstanding
 import com.depotpro.app.data.model.ConfirmSettlementRequest
 import com.depotpro.app.data.model.DriverSettlementRequest
@@ -31,8 +33,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
+import java.io.IOException
 
 /** Status pemuatan data dari server. */
 sealed class Load<out T> {
@@ -47,7 +53,10 @@ fun <T> Load<List<T>>.dataOrEmpty(): List<T> = (this as? Load.Ready<List<T>>)?.d
  * Repository berbasis server: server adalah satu-satunya sumber kebenaran (stok, harga, total, laporan).
  * Setiap aksi dikirim ke server dulu; data lokal hanya diperbarui dari respons/refresh server.
  */
-class DepotRepository(private val api: ApiService) {
+/** Hasil penjualan: [queued] = true bila disimpan di HP karena offline dan akan dikirim otomatis. */
+data class SaleResult(val order: Order, val queued: Boolean)
+
+class DepotRepository(private val api: ApiService, private val store: PendingOrderStore) {
 
     private val _products = MutableStateFlow<Load<List<Product>>>(Load.Loading)
     private val _orders = MutableStateFlow<Load<List<Order>>>(Load.Loading)
@@ -57,6 +66,8 @@ class DepotRepository(private val api: ApiService) {
     private val _receivables = MutableStateFlow<Load<List<Receivable>>>(Load.Loading)
     private val _summary = MutableStateFlow<Load<DashboardSummary>>(Load.Loading)
     private val _daily = MutableStateFlow<Load<DailyReport>>(Load.Loading)
+    private val _pendingCount = MutableStateFlow(store.pending().size)
+    private val _failedOrders = MutableStateFlow(store.failed())
     private val _users = MutableStateFlow<Load<List<AccountUser>>>(Load.Loading)
     private val _settlements = MutableStateFlow<Load<List<SettlementItem>>>(Load.Loading)
     private val _outstanding = MutableStateFlow<Load<List<CashOutstanding>>>(Load.Loading)
@@ -69,6 +80,15 @@ class DepotRepository(private val api: ApiService) {
     val receivablesState: StateFlow<Load<List<Receivable>>> = _receivables.asStateFlow()
     val summaryState: StateFlow<Load<DashboardSummary>> = _summary.asStateFlow()
     val dailyState: StateFlow<Load<DailyReport>> = _daily.asStateFlow()
+    /** Jumlah transaksi offline yang menunggu dikirim. */
+    val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
+    /** Transaksi offline yang ditolak server dan perlu keputusan kasir. */
+    val failedOrders: StateFlow<List<FailedOrder>> = _failedOrders.asStateFlow()
+
+    /** Produk yang stoknya sudah di batas minimum (hanya produk yang batasnya sudah diisi). */
+    val lowStockProducts: Flow<List<Product>> = _products.map { load ->
+        load.dataOrEmpty().filter { (it.reorderPoint ?: 0) > 0 && it.stock <= (it.reorderPoint ?: 0) }
+    }
     val usersState: StateFlow<Load<List<AccountUser>>> = _users.asStateFlow()
     val settlementsState: StateFlow<Load<List<SettlementItem>>> = _settlements.asStateFlow()
     val outstandingState: StateFlow<Load<List<CashOutstanding>>> = _outstanding.asStateFlow()
@@ -144,6 +164,7 @@ class DepotRepository(private val api: ApiService) {
      */
     suspend fun refreshAll(userRole: String, silent: Boolean = false, light: Boolean = false) {
         role = userRole
+        if (userRole == "owner" || userRole == "kasir") syncPending()
         coroutineScope {
             when (userRole) {
                 "owner" -> {
@@ -229,7 +250,9 @@ class DepotRepository(private val api: ApiService) {
                         category = product.category,
                         price = product.price,
                         costPrice = product.costPrice,
-                        unit = product.unit
+                        unit = product.unit,
+                        reorderPoint = product.reorderPoint,
+                        trackEmpty = product.trackEmpty
                     )
                 )
                 val filledDelta = product.stock - original.stock
@@ -258,13 +281,77 @@ class DepotRepository(private val api: ApiService) {
     }
 
     // -------------------------------------------------------------- order
-    /** Mengembalikan order tersimpan (dengan id dari server) atau null bila gagal. */
-    suspend fun createOrder(order: Order): Order? {
-        val saved = mutate { api.createOrder(order) } ?: return null
-        refreshOrders()
-        refreshProducts()
-        refreshSummary()
-        return saved
+    /**
+     * Simpan penjualan ke server. Bila internet putus, transaksi disimpan di HP dan dikirim otomatis nanti
+     * (aman: id unik + server idempoten). Mengembalikan null bila server menolak (mis. stok tidak cukup).
+     */
+    suspend fun createOrder(order: Order): SaleResult? {
+        return try {
+            val saved = api.createOrder(order)
+            store.removePending(order.id)
+            refreshPendingState()
+            refreshOrders()
+            refreshProducts()
+            refreshSummary()
+            SaleResult(saved, false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            store.addPending(order)
+            refreshPendingState()
+            notify("Tidak ada koneksi. Transaksi disimpan di HP dan dikirim otomatis saat internet kembali.")
+            SaleResult(order, true)
+        } catch (e: Exception) {
+            notify(e.toUserMessage())
+            null
+        }
+    }
+
+    private fun refreshPendingState() {
+        _pendingCount.value = store.pending().size
+        _failedOrders.value = store.failed()
+    }
+
+    /** Kirim ulang transaksi offline. Berhenti bila masih offline; yang ditolak server dipindah ke daftar gagal. */
+    suspend fun syncPending(): Boolean {
+        val list = store.pending()
+        if (list.isEmpty()) return false
+        var sent = 0
+        for (o in list) {
+            try {
+                api.createOrder(o)
+                store.removePending(o.id)
+                sent++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IOException) {
+                break // masih offline
+            } catch (e: HttpException) {
+                if (e.code() == 401) break
+                store.moveToFailed(o, e.toUserMessage())
+            } catch (e: Exception) {
+                store.moveToFailed(o, e.toUserMessage())
+            }
+        }
+        refreshPendingState()
+        if (sent > 0) {
+            notify("$sent transaksi offline berhasil dikirim")
+            refreshOrders()
+            refreshProducts()
+            refreshSummary()
+        }
+        return sent > 0
+    }
+
+    suspend fun retryFailedOrder(id: String) {
+        store.retryFailed(id)
+        refreshPendingState()
+        syncPending()
+    }
+
+    fun discardFailedOrder(id: String) {
+        store.discardFailed(id)
+        refreshPendingState()
     }
 
     suspend fun updateOrderStatus(orderId: String, status: String, gallonsReturned: Int, lpgReturned: Int): Boolean {
@@ -509,6 +596,15 @@ class DepotRepository(private val api: ApiService) {
         refreshOutstanding()
         refreshDaily()
         refreshProducts()
+        return true
+    }
+
+    // ---------------------------------------------------- saldo deposit
+    /** [amount] positif = isi saldo; negatif = kurangi (khusus pemilik). */
+    suspend fun adjustDeposit(customerId: String, amount: Double, reason: String?): Boolean {
+        mutate { api.adjustDeposit(customerId, DepositRequest(amount, reason)) } ?: return false
+        notify(if (amount >= 0) "Saldo deposit ditambah" else "Saldo deposit dikurangi")
+        refreshCustomers()
         return true
     }
 }

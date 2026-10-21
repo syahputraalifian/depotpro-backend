@@ -45,6 +45,11 @@ class CustomerViewModel(private val depotRepository: DepotRepository) : ViewMode
         }
     }
 
+    /** [amount] positif = isi saldo, negatif = kurangi (khusus pemilik). */
+    fun adjustDeposit(customerId: String, amount: Double, reason: String) {
+        viewModelScope.launch { depotRepository.adjustDeposit(customerId, amount, reason.ifBlank { null }) }
+    }
+
     fun deleteCustomer(customerId: String) {
         viewModelScope.launch { depotRepository.deleteCustomer(customerId) }
     }

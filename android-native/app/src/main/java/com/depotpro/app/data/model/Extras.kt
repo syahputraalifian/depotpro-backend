@@ -133,3 +133,15 @@ data class Payroll(
 data class ResetRequest(
     @SerializedName("confirm") val confirm: String
 )
+
+// ---------------- Saldo deposit & antrean offline
+data class DepositRequest(
+    @SerializedName("amount") val amount: Double,
+    @SerializedName("reason") val reason: String? = null
+)
+
+/** Transaksi offline yang ditolak server saat dikirim ulang (mis. stok sudah habis). */
+data class FailedOrder(
+    @SerializedName("order") val order: Order,
+    @SerializedName("message") val message: String = ""
+)

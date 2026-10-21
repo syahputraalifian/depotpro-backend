@@ -128,6 +128,7 @@ fun MainLayout(
     closingViewModel: ClosingViewModel,
     usersViewModel: UsersViewModel,
     setoranViewModel: SetoranViewModel,
+    lowStockNames: List<String>,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -153,6 +154,7 @@ fun MainLayout(
             closingViewModel = closingViewModel,
             usersViewModel = usersViewModel,
             setoranViewModel = setoranViewModel,
+            lowStockNames = lowStockNames,
             messages = messages,
             fontScale = fontScale,
             onFontScaleChange = onFontScaleChange
@@ -175,6 +177,7 @@ private fun AppContent(
     closingViewModel: ClosingViewModel,
     usersViewModel: UsersViewModel,
     setoranViewModel: SetoranViewModel,
+    lowStockNames: List<String>,
     messages: SharedFlow<String>,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit
@@ -280,11 +283,15 @@ private fun AppContent(
             }
         }
     ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding)) {
+        if (loggedIn && (role == "owner" || role == "gudang") && lowStockNames.isNotEmpty() && currentRoute != Screen.Login.route) {
+            LowStockBanner(lowStockNames)
+        }
         // Tanpa animasi perpindahan layar: terasa instan dan ringan di HP lama.
         NavHost(
             navController = navController,
             startDestination = Screen.Login.route,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier.weight(1f),
             enterTransition = { EnterTransition.None },
             exitTransition = { ExitTransition.None },
             popEnterTransition = { EnterTransition.None },
@@ -319,6 +326,7 @@ private fun AppContent(
             composable(Screen.Closing.route) { ClosingScreen(closingViewModel = closingViewModel, userRole = role) }
             composable(Screen.Users.route) { UsersScreen(usersViewModel = usersViewModel) }
             composable(Screen.Setoran.route) { SetoranScreen(setoranViewModel = setoranViewModel, userRole = role) }
+        }
         }
     }
 
@@ -362,6 +370,18 @@ private fun AppContent(
         ChangePasswordDialog(
             onDismiss = { showPasswordDialog = false },
             onSubmit = { old, new, done -> authViewModel.changePassword(old, new, done) }
+        )
+    }
+}
+
+@Composable
+private fun LowStockBanner(names: List<String>) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Stok menipis: " + names.take(3).joinToString(", ") + if (names.size > 3) " (+${names.size - 3} lainnya)" else "",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer
         )
     }
 }

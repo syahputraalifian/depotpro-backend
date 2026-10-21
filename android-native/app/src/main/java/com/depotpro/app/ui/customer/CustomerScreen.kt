@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.depotpro.app.ui.pos.rupiah
 import com.depotpro.app.data.model.Customer
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,20 +32,22 @@ fun CustomerScreen(customerViewModel: CustomerViewModel, userRole: String?) {
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
+    var depositTarget by remember { mutableStateOf<Customer?>(null) }
+    var depositNegative by remember { mutableStateOf(false) }
 
     fun openAddDialog() {
         editingCustomer = null
         name = ""
-        phone = "08123456789"
-        address = "Jl. Depot Melati No. 8"
+        phone = ""
+        address = ""
         showDialog = true
     }
 
     fun openEditDialog(c: Customer) {
         editingCustomer = c
         name = c.name
-        phone = c.phone ?: "08123456789"
-        address = c.address ?: "Jl. Depot Melati No. 8"
+        phone = c.phone ?: ""
+        address = c.address ?: ""
         showDialog = true
     }
 
@@ -105,6 +108,26 @@ fun CustomerScreen(customerViewModel: CustomerViewModel, userRole: String?) {
                                             Text(customer.name, fontWeight = FontWeight.Bold)
                                             Text(customer.phone ?: "-", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(customer.address ?: "-", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "Saldo deposit: ${rupiah(customer.deposit ?: 0.0)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            if (canManage) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    TextButton(onClick = {
+                                                        depositNegative = false
+                                                        depositTarget = customer
+                                                    }) { Text("Isi Saldo") }
+                                                    if (userRole == "owner") {
+                                                        TextButton(onClick = {
+                                                            depositNegative = true
+                                                            depositTarget = customer
+                                                        }) { Text("Kurangi", color = MaterialTheme.colorScheme.error) }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         if (canManage) {
@@ -127,6 +150,19 @@ fun CustomerScreen(customerViewModel: CustomerViewModel, userRole: String?) {
                     Text(current.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.align(Alignment.Center))
                 }
                 else -> {}
+            }
+
+            depositTarget?.let { target ->
+                DepositDialog(
+                    customerName = target.name,
+                    currentDeposit = target.deposit ?: 0.0,
+                    negative = depositNegative,
+                    onDismiss = { depositTarget = null },
+                    onConfirm = { amount, reason ->
+                        depositTarget = null
+                        target.id?.let { customerViewModel.adjustDeposit(it, if (depositNegative) -amount else amount, reason) }
+                    }
+                )
             }
 
             if (showDialog && canManage) {
@@ -165,4 +201,52 @@ fun CustomerScreen(customerViewModel: CustomerViewModel, userRole: String?) {
             }
         }
     }
+}
+
+@Composable
+private fun DepositDialog(
+    customerName: String,
+    currentDeposit: Double,
+    negative: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Double, String) -> Unit
+) {
+    var amountStr by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf("") }
+    val amount = amountStr.toDoubleOrNull()
+    val tooMuch = negative && amount != null && amount > currentDeposit
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (negative) "Kurangi Saldo Deposit" else "Isi Saldo Deposit") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("$customerName - saldo sekarang ${rupiah(currentDeposit)}")
+                OutlinedTextField(
+                    value = amountStr,
+                    onValueChange = { amountStr = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("Jumlah (Rp)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (tooMuch) {
+                    Text("Melebihi saldo yang ada", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { reason = it },
+                    label = { Text("Catatan (opsional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (amount != null && amount > 0) onConfirm(amount, reason) },
+                enabled = amount != null && amount > 0 && !tooMuch
+            ) { Text("Simpan") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
+    )
 }
